@@ -134,10 +134,15 @@
         <button id="cloneVoiceBtn" class="save-btn" style="margin-top:8px">🎙️ Clonar voz</button>
         <p id="voiceCloneStatus" class="hint small" style="margin-top:8px"></p>
 
-        <label style="margin-top:14px;display:flex;align-items:center;gap:8px">
-          <input id="cfg-voiceEnabled" type="checkbox" style="width:auto" />
-          Responder a los clientes con audio (voz clonada) en vez de texto
-        </label>
+        <label style="margin-top:14px">¿Cómo debe responder el bot a los clientes?</label>
+        <select id="cfg-voiceMode">
+          <option value="off">🔇 Apagado — siempre responde en texto</option>
+          <option value="voice">🔊 Siempre con voz clonada</option>
+          <option value="mirror">🪞 Modo espejo — si el cliente manda audio, responde audio; si escribe, responde texto</option>
+        </select>
+
+        <button id="saveVoiceConfigBtn" class="save-btn" style="margin-top:14px">Guardar configuración de voz</button>
+        <span id="voiceConfigSaved" class="saved-msg"></span>
       </div>
 
       <div class="card">

@@ -153,11 +153,12 @@ fetch('/api/status').then((r) => r.json()).then((d) => setStatus(d.status));
 const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
   'responseDelaySeconds', 'notificationPhoneNumber', 'aiProvider', 'groqApiKey',
-  'openaiApiKey', 'minimaxApiKey', 'minimaxGroupId',
+  'openaiApiKey',
 ];
 // groqModel y openaiModel se manejan aparte porque son selects con opción
 // "otro personalizado" (por si el modelo que quieren no está en la lista).
-// voiceEnabled se maneja aparte porque es un checkbox (checked, no value).
+// minimaxApiKey, minimaxGroupId y voiceMode se guardan con su propio botón
+// (tarjeta de "Voz del bot"), independiente del resto de la configuración.
 
 function setupModelSelect(selectId, customId, value) {
   const select = document.getElementById(selectId);
@@ -195,7 +196,9 @@ async function loadConfig() {
     const el = document.getElementById(`cfg-${f}`);
     if (el) el.value = cfg[f] ?? '';
   });
-  document.getElementById('cfg-voiceEnabled').checked = !!cfg.voiceEnabled;
+  // Compatibilidad: si alguien tenía la versión vieja con voiceEnabled (true/false),
+  // lo traducimos automáticamente a voiceMode la primera vez que carga.
+  document.getElementById('cfg-voiceMode').value = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
   updateVoiceCloneStatus(cfg);
   setupModelSelect('cfg-groqModel', 'cfg-groqModel-custom', cfg.groqModel);
   setupModelSelect('cfg-openaiModel', 'cfg-openaiModel-custom', cfg.openaiModel);
@@ -210,13 +213,28 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   });
   body.groqModel = getModelValue('cfg-groqModel', 'cfg-groqModel-custom');
   body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
-  body.voiceEnabled = document.getElementById('cfg-voiceEnabled').checked;
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   const saved = document.getElementById('configSaved');
+  saved.textContent = 'Guardado ✔';
+  setTimeout(() => (saved.textContent = ''), 2000);
+});
+
+// Botón propio para la tarjeta de voz — guarda API key, Group ID y el modo de voz.
+document.getElementById('saveVoiceConfigBtn').addEventListener('click', async () => {
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      minimaxApiKey: document.getElementById('cfg-minimaxApiKey').value,
+      minimaxGroupId: document.getElementById('cfg-minimaxGroupId').value,
+      voiceMode: document.getElementById('cfg-voiceMode').value,
+    }),
+  });
+  const saved = document.getElementById('voiceConfigSaved');
   saved.textContent = 'Guardado ✔';
   setTimeout(() => (saved.textContent = ''), 2000);
 });
