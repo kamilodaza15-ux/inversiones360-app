@@ -9,9 +9,13 @@ const { Server } = require('socket.io');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 
 // ---------- Sistema de actualizaciones ----------
-const CURRENT_VERSION = '1.2.0';
+// Cada vez que mejores el código: 1) subes ESTE archivo (server.js) actualizado
+// a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
+// que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
+// panel compara ambos números para saber si hay algo nuevo.
+const CURRENT_VERSION = '1.5.0';
 const UPDATE_MANIFEST_URL =
-  'https://raw.githubusercontent.com/jarandres16-lang/inversiones360-bot-updates/main/latest.json';
+  'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
 const app = express();
 const server = http.createServer(app);
@@ -21,12 +25,12 @@ app.use(express.json());
 const DATA_DIR = path.join(__dirname, 'data');
 const MEDIA_DIR = path.join(__dirname, 'media');
 const TMP_DIR = path.join(__dirname, 'tmp');
-const SESSION_DIR = path.join(__dirname, 'session');
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
 const LICENSE_PATH = path.join(DATA_DIR, 'license.json');
 const VALID_KEYS_PATH = path.join(DATA_DIR, 'valid-keys.json');
 const CONVERSATIONS_PATH = path.join(DATA_DIR, 'conversations.json');
+const SESSION_DIR = path.join(__dirname, 'session');
 
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
@@ -55,6 +59,7 @@ app.get('/api/license', (req, res) => {
   const lic = readLicense();
   const currentMachine = getMachineId();
   if (lic.activated && lic.machineId !== currentMachine) {
+    // Esta copia fue activada en OTRA computadora: exige reactivar aquí.
     return res.json({ activated: false, key: '', machineId: '' });
   }
   res.json(lic);
@@ -70,6 +75,7 @@ app.post('/api/license/activate', (req, res) => {
   res.json({ ok: true });
 });
 
+// Bloquea el resto de la API si la licencia no está activada en ESTA máquina
 app.use('/api', (req, res, next) => {
   if (req.path === '/license' || req.path === '/license/activate') return next();
   const lic = readLicense();
@@ -82,6 +88,7 @@ app.use('/api', (req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/media', express.static(MEDIA_DIR));
 
+// ---------- Helpers de datos ----------
 function readConfig() {
   return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 }
@@ -95,18 +102,36 @@ function writeProducts(products) {
   fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(products, null, 2));
 }
 
+// ---------- Subida de imágenes y video ----------
 const upload = multer({
   storage: multer.diskStorage({
     destination: MEDIA_DIR,
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.jpg';
+      const ext = path.extname(file.originalname) || (file.fieldname === 'video' ? '.mp4' : '.jpg');
       const id = req.body.id || req.params.id || 'producto';
-      cb(null, `${id}-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`);
+      cb(null, `${id}-${file.fieldname}-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`);
     },
   }),
-  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === 'video') {
+      if (!file.mimetype.startsWith('video/')) {
+        return cb(new Error('El archivo de video debe ser un video real (mp4, etc.)'));
+      }
+    } else if (file.fieldname === 'images') {
+      if (!file.mimetype.startsWith('image/')) {
+        return cb(new Error('Las imágenes deben ser archivos de imagen reales'));
+      }
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB: alcanza para videos cortos de producto
 });
+const uploadProductMedia = upload.fields([
+  { name: 'images', maxCount: 6 },
+  { name: 'video', maxCount: 1 },
+]);
 
+// ---------- API: configuración ----------
 app.get('/api/config', (req, res) => res.json(readConfig()));
 
 app.post('/api/config', (req, res) => {
@@ -116,11 +141,13 @@ app.post('/api/config', (req, res) => {
   res.json(updated);
 });
 
+// ---------- API: productos ----------
 app.get('/api/products', (req, res) => res.json(readProducts()));
 
-app.post('/api/products', upload.array('images', 6), (req, res) => {
+app.post('/api/products', uploadProductMedia, (req, res) => {
   const products = readProducts();
   const id = req.body.id || `prod-${Date.now()}`;
+  const files = req.files || {};
   const newProduct = {
     id,
     name: req.body.name || '',
@@ -131,20 +158,23 @@ app.post('/api/products', upload.array('images', 6), (req, res) => {
     priceBefore: req.body.priceBefore || '',
     priceAfter: req.body.priceAfter || '',
     details: req.body.details || '',
-    images: (req.files || []).map((f) => `/media/${f.filename}`),
+    images: (files.images || []).map((f) => `/media/${f.filename}`),
+    video: (files.video || [])[0] ? `/media/${files.video[0].filename}` : '',
   };
   products.push(newProduct);
   writeProducts(products);
   res.json(newProduct);
 });
 
-app.put('/api/products/:id', upload.array('images', 6), (req, res) => {
+app.put('/api/products/:id', uploadProductMedia, (req, res) => {
   const products = readProducts();
   const idx = products.findIndex((p) => p.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'No encontrado' });
 
   const existing = products[idx];
-  const newImages = (req.files || []).map((f) => `/media/${f.filename}`);
+  const files = req.files || {};
+  const newImages = (files.images || []).map((f) => `/media/${f.filename}`);
+  const newVideo = (files.video || [])[0] ? `/media/${files.video[0].filename}` : null;
   const updated = {
     ...existing,
     name: req.body.name ?? existing.name,
@@ -156,6 +186,7 @@ app.put('/api/products/:id', upload.array('images', 6), (req, res) => {
         ? req.body.keywords.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean)
         : existing.keywords,
     images: newImages.length > 0 ? newImages : existing.images,
+    video: newVideo !== null ? newVideo : (existing.video || ''),
   };
   products[idx] = updated;
   writeProducts(products);
@@ -169,6 +200,7 @@ app.delete('/api/products/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- IA: helpers de proveedor ----------
 function getGroqClient(cfg) {
   const Groq = require('groq-sdk');
   return new Groq({ apiKey: cfg.groqApiKey });
@@ -178,6 +210,10 @@ function getOpenAIClient(cfg) {
   return new OpenAI({ apiKey: cfg.openaiApiKey });
 }
 
+// ---------- Tool: enviar imagen o video del producto ----------
+// En vez de depender de palabras clave, dejamos que el modelo decida cuándo
+// llamar estas "herramientas". Solo cuando el modelo las invoca de verdad se
+// disparan las imágenes/video reales por WhatsApp.
 const productImageTool = {
   type: 'function',
   function: {
@@ -198,14 +234,37 @@ const productImageTool = {
   },
 };
 
+const productVideoTool = {
+  type: 'function',
+  function: {
+    name: 'enviar_video_producto',
+    description:
+      'Envía el video real del producto por WhatsApp. Úsala cuando el cliente pida ver un video, cómo funciona, una demostración, o algo similar. Solo funciona si el producto tiene un video cargado — si no lo tiene, la función te lo va a indicar. Nunca digas que enviaste un video sin llamar a esta función primero.',
+    parameters: {
+      type: 'object',
+      properties: {
+        producto: {
+          type: 'string',
+          description:
+            'Nombre (o parte del nombre) del producto del que el cliente quiere ver el video. Si solo hay un producto en el catálogo, usa ese nombre.',
+        },
+      },
+      required: ['producto'],
+    },
+  },
+};
+
 function findProductByQuery(query) {
   const products = readProducts();
   if (!query) return products.length === 1 ? products[0] : null;
   const q = query.toLowerCase();
+  // 1) coincidencia por nombre
   let match = products.find((p) => p.name && p.name.toLowerCase().includes(q));
   if (match) return match;
+  // 2) coincidencia por palabras clave configuradas
   match = products.find((p) => (p.keywords || []).some((k) => q.includes(k) || k.includes(q)));
   if (match) return match;
+  // 3) si solo hay un producto, asumimos que es ese
   return products.length === 1 ? products[0] : null;
 }
 
@@ -223,6 +282,25 @@ async function sendProductImages(userId, product) {
   return true;
 }
 
+async function sendProductVideo(userId, product) {
+  if (!product || !product.video) {
+    return false;
+  }
+  const videoPath = path.join(__dirname, product.video.replace(/^\//, ''));
+  if (!fs.existsSync(videoPath)) {
+    return false;
+  }
+  const media = MessageMedia.fromFilePath(videoPath);
+  // sendMediaAsDocument evita que WhatsApp recomprima demasiado el video y
+  // ayuda con archivos más pesados; para clips cortos se ve igual de bien.
+  await client.sendMessage(userId, media);
+  return true;
+}
+
+// ---------- IA: llamada según proveedor configurado (con soporte de tools) ----------
+// Devuelve el mensaje completo del modelo (content + tool_calls si los hay).
+// Si Groq/OpenAI responde con error 429 (límite de tokens o mensajes por minuto),
+// espera el tiempo que ellos indican y reintenta, en vez de fallar de una vez.
 async function getAIMessage(messages, tools, attempt = 1) {
   const cfg = readConfig();
   const payload = {
@@ -255,6 +333,7 @@ async function getAIMessage(messages, tools, attempt = 1) {
     const isRateLimit = err?.status === 429;
     const MAX_ATTEMPTS = 3;
     if (isRateLimit && attempt < MAX_ATTEMPTS) {
+      // Groq/OpenAI indican cuántos segundos esperar en este header.
       const retryAfterHeader = err?.headers?.['retry-after'];
       const waitSeconds = retryAfterHeader ? parseFloat(retryAfterHeader) : 5 * attempt;
       io.emit(
@@ -268,6 +347,7 @@ async function getAIMessage(messages, tools, attempt = 1) {
   }
 }
 
+// ---------- Transcripción de audio (notas de voz) ----------
 async function transcribeAudio(base64Data, mimetype) {
   const cfg = readConfig();
   const ext = (mimetype || '').includes('ogg') ? 'ogg' : (mimetype || '').includes('mp4') ? 'm4a' : 'oga';
@@ -305,7 +385,8 @@ function buildSystemPrompt() {
         p.priceBefore && p.priceAfter
           ? `Precio: antes ${p.priceBefore}, HOY EN DESCUENTO a ${p.priceAfter}`
           : `Precio: ${p.priceAfter || p.priceBefore || 'consultar'}`;
-      return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details}`;
+      const videoLine = p.video ? '  Tiene video disponible: SÍ' : '  Tiene video disponible: NO';
+      return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details}\n${videoLine}`;
     })
     .join('\n');
 
@@ -321,7 +402,8 @@ Si el cliente pregunta por un producto específico, responde con los detalles de
 Si pregunta en general, puedes mencionar brevemente los productos disponibles y preguntar cuál le interesa.
 
 Cuando el cliente pida ver fotos, imágenes o cómo se ve el producto, usa la función enviar_imagen_producto para enviarlas de verdad.
-Nunca digas frases como "ya te la envío" o "aquí tienes la foto" si no llamaste a esa función — el cliente no recibirá nada si solo lo dices en texto.
+Cuando el cliente pida ver un video, una demostración o cómo funciona, usa la función enviar_video_producto — pero solo si el catálogo dice que ese producto SÍ tiene video disponible; si no lo tiene, dilo con naturalidad en vez de llamar la función.
+Nunca digas frases como "ya te la envío" o "aquí tienes la foto/video" si no llamaste a la función correspondiente — el cliente no recibirá nada si solo lo dices en texto.
 `;
 }
 
@@ -329,10 +411,15 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ---------- Cliente de WhatsApp ----------
 let client = null;
-let botStatus = 'stopped';
+let botStatus = 'stopped'; // stopped | starting | qr | connected
 const MAX_HISTORY = 12;
 
+// ---- Conversaciones persistentes en disco ----
+// Antes vivían solo en RAM (se perdían al cerrar el bot). Ahora se guardan en
+// data/conversations.json y se recargan al arrancar, para no "olvidar" a un
+// cliente a mitad de una compra si el bot se reinicia.
 let conversations = new Map();
 let seenUsers = new Set();
 
@@ -359,6 +446,11 @@ function saveConversations() {
 
 loadConversations();
 
+// ---- Cola de mensajes por cliente ----
+// Sin esto, si un cliente manda 2-3 mensajes seguidos muy rápido, cada uno se
+// procesa en paralelo y pueden pisarse o responderse en desorden. Con la cola,
+// los mensajes del MISMO número se procesan uno por uno, en orden. Distintos
+// clientes sí se siguen atendiendo en paralelo entre sí.
 const userQueues = new Map();
 
 function enqueueForUser(userId, task) {
@@ -405,6 +497,8 @@ function startBot() {
 
   client.on('message', async (msg) => {
     if (msg.from.includes('@g.us') || msg.isStatus) return;
+    // Encola el mensaje: si el mismo cliente manda varios seguidos, se procesan
+    // uno por uno y en orden, sin pisarse entre sí.
     enqueueForUser(msg.from, () => processMessage(msg));
   });
 
@@ -415,6 +509,7 @@ function startBot() {
       const isNewUser = !seenUsers.has(userId);
       seenUsers.add(userId);
 
+      // ---- Notas de voz: transcribir antes de seguir el flujo normal ----
       let messageText = msg.body;
       if (msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio')) {
         try {
@@ -428,7 +523,6 @@ function startBot() {
           io.emit('log', `🎙️ Transcripción: ${messageText}`);
         } catch (e) {
           console.error('Error transcribiendo audio:', e);
-          io.emit('log', `❌ Error transcribiendo audio: ${e.message}`);
           await msg.reply('No pude procesar el audio 🙏. ¿Me lo escribes en texto?');
           return;
         }
@@ -438,7 +532,7 @@ function startBot() {
         conversations.set(userId, [{ role: 'system', content: buildSystemPrompt() }]);
       }
       const history = conversations.get(userId);
-      history[0] = { role: 'system', content: buildSystemPrompt() };
+      history[0] = { role: 'system', content: buildSystemPrompt() }; // refresca por si cambiaron productos/config
       history.push({ role: 'user', content: messageText });
 
       if (history.length > MAX_HISTORY + 1) {
@@ -449,7 +543,9 @@ function startBot() {
       try {
         const chat = await msg.getChat();
         await chat.sendStateTyping();
-      } catch (e) {}
+      } catch (e) {
+        // sin problema si no se puede mostrar "escribiendo..."
+      }
 
       if (isNewUser) {
         await client.sendMessage(userId, cfg.welcomeMessage);
@@ -457,9 +553,11 @@ function startBot() {
 
       await sleep((cfg.responseDelaySeconds ?? 5) * 1000);
 
-      let aiMessage = await getAIMessage(history, [productImageTool]);
+      // ---- Primera llamada a la IA, con las herramientas de imagen y video disponibles ----
+      let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool]);
 
       if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+        // El modelo decidió enviar imagen o video: lo hacemos de verdad.
         history.push({
           role: 'assistant',
           content: aiMessage.content || null,
@@ -479,6 +577,12 @@ function startBot() {
             resultText = sent
               ? `Imagen(es) de "${product.name}" enviadas correctamente.`
               : 'No hay imágenes disponibles para ese producto.';
+          } else if (toolCall.function.name === 'enviar_video_producto') {
+            const product = findProductByQuery(args.producto);
+            const sent = await sendProductVideo(userId, product);
+            resultText = sent
+              ? `Video de "${product.name}" enviado correctamente.`
+              : 'Ese producto no tiene un video cargado.';
           }
 
           history.push({
@@ -488,6 +592,8 @@ function startBot() {
           });
         }
 
+        // Segunda llamada para que la IA redacte el mensaje final ya sabiendo
+        // qué se envió de verdad (o si no había disponible).
         aiMessage = await getAIMessage(history);
       }
 
@@ -520,7 +626,7 @@ app.post('/api/start', (req, res) => {
 
 app.get('/api/status', (req, res) => res.json({ status: botStatus }));
 
-// ---------- API: cerrar sesión de WhatsApp ----------
+// ---------- API: cerrar sesión de WhatsApp (desvincula el número, conserva la app abierta) ----------
 app.post('/api/logout', async (req, res) => {
   try {
     if (client) {
@@ -545,6 +651,31 @@ app.post('/api/logout', async (req, res) => {
   }
 });
 
+// ---------- API: cerrar el bot por completo (no solo minimizarlo a la bandeja) ----------
+// A diferencia de /api/logout (que solo desvincula el número de WhatsApp),
+// esto apaga el proceso entero de la app. global.quitApp lo expone main.js
+// (mismo proceso de Electron), así que si el bot corre fuera de Electron
+// (ej. con "npm start" directo) caemos de vuelta a process.exit.
+app.post('/api/quit-app', async (req, res) => {
+  res.json({ ok: true });
+  io.emit('log', '🛑 Cerrando el asistente...');
+  try {
+    if (client) {
+      await client.destroy();
+    }
+  } catch (e) {
+    console.error('Error cerrando cliente antes de salir:', e);
+  }
+  setTimeout(() => {
+    if (typeof global.quitApp === 'function') {
+      global.quitApp();
+    } else {
+      process.exit(0);
+    }
+  }, 500);
+});
+
+// ---------- API: revisar y aplicar actualizaciones ----------
 app.get('/api/check-update', async (req, res) => {
   try {
     const response = await fetch(UPDATE_MANIFEST_URL, { cache: 'no-store' });
@@ -566,21 +697,49 @@ app.post('/api/apply-update', async (req, res) => {
     const manifestResponse = await fetch(UPDATE_MANIFEST_URL, { cache: 'no-store' });
     if (!manifestResponse.ok) throw new Error('No se pudo consultar el manifiesto');
     const manifest = await manifestResponse.json();
-    if (!manifest.serverUrl) throw new Error('El manifiesto no incluye la URL del archivo nuevo');
 
-    const fileResponse = await fetch(manifest.serverUrl, { cache: 'no-store' });
-    if (!fileResponse.ok) throw new Error('No se pudo descargar el archivo actualizado');
-    const newCode = await fileResponse.text();
+    // Formato nuevo: manifest.files = { "ruta/relativa": "url raw de GitHub", ... }
+    // permite actualizar varios archivos a la vez (server.js, main.js, public/...).
+    // Formato viejo (compatibilidad): manifest.serverUrl = "url" — solo actualizaba server.js.
+    const filesToUpdate =
+      manifest.files && typeof manifest.files === 'object' && Object.keys(manifest.files).length > 0
+        ? manifest.files
+        : manifest.serverUrl
+        ? { 'server.js': manifest.serverUrl }
+        : null;
 
-    const currentPath = path.join(__dirname, 'server.js');
-    const backupPath = path.join(__dirname, `server.js.bak-${Date.now()}`);
-    fs.copyFileSync(currentPath, backupPath);
-    fs.writeFileSync(currentPath, newCode, 'utf8');
+    if (!filesToUpdate) {
+      throw new Error('El manifiesto no indica qué archivo(s) actualizar');
+    }
+
+    const updatedFiles = [];
+    for (const [relPath, url] of Object.entries(filesToUpdate)) {
+      // Seguridad básica: nunca dejar que una ruta se salga de la carpeta de la app.
+      const safeRelPath = relPath.replace(/^[/\\]+/, '');
+      if (safeRelPath.includes('..')) {
+        throw new Error(`Ruta de archivo no permitida: ${relPath}`);
+      }
+      const targetPath = path.join(__dirname, safeRelPath);
+
+      const fileResponse = await fetch(url, { cache: 'no-store' });
+      if (!fileResponse.ok) throw new Error(`No se pudo descargar ${relPath}`);
+      const newContent = await fileResponse.text();
+
+      if (fs.existsSync(targetPath)) {
+        const backupPath = `${targetPath}.bak-${Date.now()}`;
+        fs.copyFileSync(targetPath, backupPath);
+      } else {
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      }
+      fs.writeFileSync(targetPath, newContent, 'utf8');
+      updatedFiles.push(safeRelPath);
+    }
 
     res.json({
       ok: true,
       newVersion: manifest.version,
-      message: 'Actualización descargada. Cierra el bot y ábrelo de nuevo (Iniciar.bat) para aplicar los cambios.',
+      updatedFiles,
+      message: `Actualización descargada (${updatedFiles.length} archivo${updatedFiles.length === 1 ? '' : 's'}: ${updatedFiles.join(', ')}). Cierra el bot y ábrelo de nuevo para aplicar los cambios.`,
     });
   } catch (err) {
     res.status(500).json({ error: 'Error aplicando la actualización: ' + err.message });
