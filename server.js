@@ -37,6 +37,24 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
 const crypto = require('crypto');
 const os = require('os');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+// Convierte un mp3 (lo que devuelve MiniMax) a ogg/opus (lo que exige
+// WhatsApp para que una nota de voz se pueda reproducir del otro lado).
+function convertMp3ToOggOpus(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .audioCodec('libopus')
+      .audioBitrate('64k')
+      .audioChannels(1)
+      .format('ogg')
+      .on('error', reject)
+      .on('end', resolve)
+      .save(outputPath);
+  });
+}
 
 function getMachineId() {
   const raw = `${os.hostname()}-${os.userInfo().username}-${os.platform()}-${os.arch()}`;
@@ -389,15 +407,20 @@ async function minimaxTextToSpeech(cfg, text) {
 async function sendVoiceReply(userId, text) {
   const cfg = readConfig();
   const audioBuffer = await minimaxTextToSpeech(cfg, text);
-  const tmpPath = path.join(TMP_DIR, `voice-reply-${Date.now()}.mp3`);
-  fs.writeFileSync(tmpPath, audioBuffer);
+  const mp3Path = path.join(TMP_DIR, `voice-reply-${Date.now()}.mp3`);
+  const oggPath = mp3Path.replace(/\.mp3$/, '.ogg');
+  fs.writeFileSync(mp3Path, audioBuffer);
   try {
-    const media = MessageMedia.fromFilePath(tmpPath);
-    // sendAudioAsVoice: true hace que llegue como nota de voz (con el ícono
-    // de micrófono), no como un archivo de audio adjunto normal.
+    // WhatsApp exige que las notas de voz vengan en OGG/Opus. MiniMax nos da
+    // MP3, así que hay que convertirlo antes — si no, WhatsApp recibe el
+    // archivo pero no lo puede reproducir ("no se pudo descargar el audio").
+    await convertMp3ToOggOpus(mp3Path, oggPath);
+    const oggBuffer = fs.readFileSync(oggPath);
+    const media = new MessageMedia('audio/ogg; codecs=opus', oggBuffer.toString('base64'), 'voice.ogg');
     await client.sendMessage(userId, media, { sendAudioAsVoice: true });
   } finally {
-    fs.unlink(tmpPath, () => {});
+    fs.unlink(mp3Path, () => {});
+    fs.unlink(oggPath, () => {});
   }
 }
 
@@ -634,7 +657,8 @@ function startBot() {
 
       // ---- Notas de voz: transcribir antes de seguir el flujo normal ----
       let messageText = msg.body;
-      if (msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio')) {
+      const isVoiceMessage = msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio');
+      if (isVoiceMessage) {
         try {
           const media = await msg.downloadMedia();
           io.emit('log', `🎙️ Transcribiendo audio de ${userId}...`);
@@ -724,9 +748,16 @@ function startBot() {
       history.push({ role: 'assistant', content: reply });
       saveConversations();
 
-      // ---- Responder con audio (voz clonada) si está activado, si no, texto normal ----
-      const voiceReady = cfg.voiceEnabled && cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
-      if (voiceReady) {
+      // ---- Responder con audio (voz clonada) según el modo configurado ----
+      // voiceMode: 'off' (siempre texto), 'voice' (siempre audio),
+      // 'mirror' (responde en el mismo formato en que llegó el mensaje).
+      const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
+      const minimaxReady = cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
+      const shouldReplyWithVoice =
+        minimaxReady &&
+        (voiceMode === 'voice' || (voiceMode === 'mirror' && isVoiceMessage));
+
+      if (shouldReplyWithVoice) {
         try {
           await sendVoiceReply(userId, reply);
         } catch (err) {
