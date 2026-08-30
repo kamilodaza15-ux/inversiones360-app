@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Inversiones 360 CHAT</title>
+<link rel="icon" href="logo.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="lockScreen" class="lock-screen">
+    <div class="lock-card">
+      <img src="logo.png" class="logo" style="width:64px;height:64px;margin-bottom:12px" onerror="this.style.display='none'" />
+      <h2>Activa tu asistente</h2>
+      <p class="hint">Ingresa el código de activación que te dieron al adquirir Inversiones 360 CHAT.</p>
+      <input id="licenseKeyInput" type="text" placeholder="Código de activación" />
+      <button id="activateBtn" class="start-btn" style="margin-top:14px">Activar</button>
+      <p id="licenseError" class="lock-error"></p>
+    </div>
+  </div>
+
+  <div id="mainApp" style="display:none">
+  <div id="updateBanner" style="display:none"></div>
+  <div class="hero">
+    <div class="hero-inner">
+      <img src="logo.png" class="logo" onerror="this.style.display='none'" />
+      <div>
+        <h1>Inversiones 360 <span>CHAT</span></h1>
+        <p class="tagline">Asistente de ventas por WhatsApp con IA</p>
+      </div>
+      <span id="statusBadge" class="badge stopped">Detenido</span>
+    </div>
+  </div>
+
+  <div class="app">
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="inicio">🏠 Inicio</button>
+      <button class="tab-btn" data-tab="config">⚙️ Configuración</button>
+      <button class="tab-btn" data-tab="productos">🛍️ Productos</button>
+    </nav>
+
+    <section id="tab-inicio" class="tab-content active">
+      <div class="card center">
+        <button id="startBtn" class="start-btn">▶ Iniciar asistente</button>
+        <button id="logoutBtn" class="cancel-btn" style="margin-left:10px">🔌 Cerrar sesión de WhatsApp</button>
+        <p id="qrHint" class="hint">Presiona "Iniciar" y escanea el QR que aparecerá aquí con WhatsApp Business.</p>
+        <img id="qrImage" class="qr-img" style="display:none" />
+        <div id="log" class="log"></div>
+      </div>
+    </section>
+
+    <section id="tab-config" class="tab-content">
+      <div class="card">
+        <h2>Empresa y asistente</h2>
+        <label>Nombre de la asistente</label>
+        <input id="cfg-assistantName" type="text" />
+
+        <label>Nombre de la empresa</label>
+        <input id="cfg-companyName" type="text" />
+
+        <label>Mensaje de bienvenida</label>
+        <textarea id="cfg-welcomeMessage" rows="3"></textarea>
+
+        <label>Instrucciones de personalidad / venta</label>
+        <textarea id="cfg-baseInstructions" rows="5"></textarea>
+
+        <label>Segundos de espera antes de responder</label>
+        <input id="cfg-responseDelaySeconds" type="number" min="0" max="60" />
+
+        <h2>Proveedor de IA</h2>
+        <label>Proveedor</label>
+        <select id="cfg-aiProvider">
+          <option value="groq">Groq (gratis / rápido)</option>
+          <option value="openai">OpenAI</option>
+        </select>
+
+        <label>Groq API Key</label>
+        <input id="cfg-groqApiKey" type="text" placeholder="gsk_..." />
+        <label>Modelo de Groq</label>
+        <input id="cfg-groqModel" type="text" />
+
+        <label>OpenAI API Key</label>
+        <input id="cfg-openaiApiKey" type="text" placeholder="sk-..." />
+        <label>Modelo de OpenAI</label>
+        <input id="cfg-openaiModel" type="text" />
+
+        <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
+        <span id="configSaved" class="saved-msg"></span>
+      </div>
+
+      <div class="card">
+        <h2>Actualizaciones</h2>
+        <p class="hint">Versión instalada: <b id="currentVersionLabel">...</b></p>
+        <button id="checkUpdateBtn" class="save-btn">🔄 Buscar actualizaciones</button>
+        <div id="updateResult" style="margin-top:14px"></div>
+      </div>
+    </section>
+
+    <section id="tab-productos" class="tab-content">
+      <div class="card">
+        <h2 id="formTitle">Agregar producto</h2>
+        <form id="productForm">
+          <input type="hidden" id="p-id" />
+          <label>Nombre del producto</label>
+          <input id="p-name" type="text" required />
+
+          <div class="price-row">
+            <div>
+              <label>Precio antes (opcional, para mostrar descuento)</label>
+              <input id="p-priceBefore" type="text" placeholder="$129.900 COP" />
+            </div>
+            <div>
+              <label>Precio actual</label>
+              <input id="p-priceAfter" type="text" placeholder="$99.900 COP" />
+            </div>
+          </div>
+
+          <label>Palabras clave (separadas por coma)</label>
+          <input id="p-keywords" type="text" placeholder="magnesio, calambres, dormir" />
+
+          <label>Detalle completo (para que la IA venda bien este producto)</label>
+          <textarea id="p-details" rows="6"></textarea>
+
+          <label>Imágenes del producto (puedes elegir varias)</label>
+          <input id="p-images" type="file" accept="image/*" multiple />
+          <p class="hint small">Si el cliente pide "fotos" o "más imágenes", Ángela envía todas las que subas aquí.</p>
+
+          <button type="submit" class="save-btn">Guardar producto</button>
+          <button type="button" id="cancelEditBtn" class="cancel-btn" style="display:none">Cancelar edición</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Productos cargados</h2>
+        <div id="productList" class="product-list"></div>
+      </div>
+    </section>
+
+    <footer class="dev-credit">Desarrollado por Juan Camilo Ramírez</footer>
+  </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
