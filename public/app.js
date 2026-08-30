@@ -152,11 +152,12 @@ fetch('/api/status').then((r) => r.json()).then((d) => setStatus(d.status));
 // ---------- Configuración ----------
 const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
-  'responseDelaySeconds', 'aiProvider', 'groqApiKey',
-  'openaiApiKey',
+  'responseDelaySeconds', 'notificationPhoneNumber', 'aiProvider', 'groqApiKey',
+  'openaiApiKey', 'minimaxApiKey', 'minimaxGroupId',
 ];
 // groqModel y openaiModel se manejan aparte porque son selects con opción
 // "otro personalizado" (por si el modelo que quieren no está en la lista).
+// voiceEnabled se maneja aparte porque es un checkbox (checked, no value).
 
 function setupModelSelect(selectId, customId, value) {
   const select = document.getElementById(selectId);
@@ -194,6 +195,8 @@ async function loadConfig() {
     const el = document.getElementById(`cfg-${f}`);
     if (el) el.value = cfg[f] ?? '';
   });
+  document.getElementById('cfg-voiceEnabled').checked = !!cfg.voiceEnabled;
+  updateVoiceCloneStatus(cfg);
   setupModelSelect('cfg-groqModel', 'cfg-groqModel-custom', cfg.groqModel);
   setupModelSelect('cfg-openaiModel', 'cfg-openaiModel-custom', cfg.openaiModel);
 }
@@ -207,6 +210,7 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   });
   body.groqModel = getModelValue('cfg-groqModel', 'cfg-groqModel-custom');
   body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
+  body.voiceEnabled = document.getElementById('cfg-voiceEnabled').checked;
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -215,6 +219,59 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   const saved = document.getElementById('configSaved');
   saved.textContent = 'Guardado ✔';
   setTimeout(() => (saved.textContent = ''), 2000);
+});
+
+// ---------- Voz clonada (MiniMax) ----------
+function updateVoiceCloneStatus(cfg) {
+  const el = document.getElementById('voiceCloneStatus');
+  if (cfg.minimaxVoiceId) {
+    el.textContent = `✔ Ya tienes una voz clonada (${cfg.minimaxVoiceId}). Puedes clonar otra para reemplazarla.`;
+    el.style.color = '#16a34a';
+  } else {
+    el.textContent = 'Todavía no has clonado ninguna voz.';
+    el.style.color = '';
+  }
+}
+
+document.getElementById('cloneVoiceBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('voice-sample');
+  const statusEl = document.getElementById('voiceCloneStatus');
+  const file = fileInput.files[0];
+  if (!file) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Primero elige un archivo de audio (mínimo 30 segundos).';
+    return;
+  }
+  // Guarda primero la API Key y Group ID actuales, para que el servidor
+  // ya las tenga disponibles al clonar.
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      minimaxApiKey: document.getElementById('cfg-minimaxApiKey').value,
+      minimaxGroupId: document.getElementById('cfg-minimaxGroupId').value,
+    }),
+  });
+
+  statusEl.style.color = '';
+  statusEl.textContent = 'Clonando voz, puede tardar un momento...';
+
+  const formData = new FormData();
+  formData.append('sample', file);
+  try {
+    const res = await fetch('/api/voice/clone', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.ok) {
+      statusEl.style.color = '#16a34a';
+      statusEl.textContent = `✔ ${data.message} (ID: ${data.voiceId})`;
+    } else {
+      statusEl.style.color = '#dc2626';
+      statusEl.textContent = data.error || 'No se pudo clonar la voz.';
+    }
+  } catch (err) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Error de conexión al clonar la voz.';
+  }
 });
 
 // ---------- Actualizaciones ----------

@@ -71,6 +71,10 @@
         <label>Segundos de espera antes de responder</label>
         <input id="cfg-responseDelaySeconds" type="number" min="0" max="60" />
 
+        <label>Tu número de WhatsApp (para recibir aviso de cada venta)</label>
+        <input id="cfg-notificationPhoneNumber" type="text" placeholder="573001234567 (con código de país, sin + ni espacios)" />
+        <p class="hint small">Cuando la IA cierre una venta (usando la frase "ORDEN DE COMPRA REGISTRADA"), te llega un mensaje aquí con los datos. Déjalo vacío para no recibir avisos.</p>
+
         <h2>Proveedor de IA</h2>
         <label>Proveedor</label>
         <select id="cfg-aiProvider">
@@ -84,11 +88,16 @@
         <label>Modelo de Groq</label>
         <select id="cfg-groqModel">
           <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (recomendado: rápido y barato)</option>
-          <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (más potente, más lento)</option>
+          <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (más potente, mismo límite diario que el de arriba)</option>
+          <option value="qwen/qwen3.8-27b">qwen/qwen3.8-27b (mejor como respaldo: 10x más límite diario)</option>
           <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b</option>
-          <option value="meta-llama/llama-4-scout-17b-16e-instruct">meta-llama/llama-4-scout-17b-16e-instruct</option>
           <option value="__custom__">Otro (escribir manualmente)...</option>
         </select>
+        <p class="hint small">
+          <b>gpt-oss-20b</b> (uso diario) y <b>gpt-oss-120b</b> (respuestas más elaboradas, mismo límite) son modelos de "Producción" de Groq — estables para negocio real.
+          <b>qwen3.6/3.8-27b</b> son modelos "Preview" (evaluación) — Groq los puede apagar sin aviso, como pasó antes con otros modelos. Úsalos solo como plan B si te quedas sin cupo del día (qwen3.8-27b tiene 10x más límite diario), no como modelo principal.
+          Revisa tus límites actuales en <a href="https://console.groq.com/settings/limits" target="_blank" rel="noopener">console.groq.com/settings/limits</a>.
+        </p>
         <input id="cfg-groqModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
 
         <label>OpenAI API Key</label>
@@ -105,6 +114,30 @@
 
         <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
         <span id="configSaved" class="saved-msg"></span>
+      </div>
+
+      <div class="card">
+        <h2>Voz del bot (clonación con MiniMax)</h2>
+        <p class="hint small">
+          A diferencia de Groq, <b>MiniMax no es gratis</b> — cobra por clonar la voz y por cada audio que genera después.
+          Si no configuras esto (o lo dejas apagado), el bot responde en texto normal, como siempre.
+        </p>
+
+        <label>MiniMax API Key</label>
+        <input id="cfg-minimaxApiKey" type="text" placeholder="tu API key de MiniMax" />
+        <label>MiniMax Group ID</label>
+        <input id="cfg-minimaxGroupId" type="text" placeholder="tu Group ID de MiniMax" />
+        <p class="hint small">Ambos los encuentras en tu cuenta de <a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> → API Keys.</p>
+
+        <label>Muestra de voz para clonar (mínimo 30 segundos)</label>
+        <input id="voice-sample" type="file" accept="audio/*" />
+        <button id="cloneVoiceBtn" class="save-btn" style="margin-top:8px">🎙️ Clonar voz</button>
+        <p id="voiceCloneStatus" class="hint small" style="margin-top:8px"></p>
+
+        <label style="margin-top:14px;display:flex;align-items:center;gap:8px">
+          <input id="cfg-voiceEnabled" type="checkbox" style="width:auto" />
+          Responder a los clientes con audio (voz clonada) en vez de texto
+        </label>
       </div>
 
       <div class="card">
