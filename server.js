@@ -13,7 +13,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.5.0';
+const CURRENT_VERSION = '1.7.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -130,6 +130,24 @@ const uploadProductMedia = upload.fields([
   { name: 'images', maxCount: 6 },
   { name: 'video', maxCount: 1 },
 ]);
+
+// ---------- Subida de la muestra de voz (para clonar con MiniMax) ----------
+const uploadVoiceSample = multer({
+  storage: multer.diskStorage({
+    destination: TMP_DIR,
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || '.mp3';
+      cb(null, `voice-sample-${Date.now()}${ext}`);
+    },
+  }),
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('audio/')) {
+      return cb(new Error('El archivo debe ser un audio real (mp3, wav, m4a)'));
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 25 * 1024 * 1024 },
+}).single('sample');
 
 // ---------- API: configuración ----------
 app.get('/api/config', (req, res) => res.json(readConfig()));
@@ -295,6 +313,111 @@ async function sendProductVideo(userId, product) {
   // ayuda con archivos más pesados; para clips cortos se ve igual de bien.
   await client.sendMessage(userId, media);
   return true;
+}
+
+// ---------- Voz clonada (MiniMax): subir muestra, clonar, y generar audio ----------
+// MiniMax necesita API Key + Group ID (los dos, a diferencia de Groq que solo
+// pide una clave). A diferencia de Groq, MiniMax NO es gratis: cobra tanto por
+// clonar la voz como por cada audio que genera después.
+const MINIMAX_BASE_URL = 'https://api.minimax.io/v1';
+
+async function minimaxUploadSample(cfg, filePath, mimetype) {
+  const fileBuffer = fs.readFileSync(filePath);
+  const form = new FormData();
+  form.append('purpose', 'voice_clone');
+  form.append('file', new Blob([fileBuffer], { type: mimetype }), path.basename(filePath));
+
+  const res = await fetch(`${MINIMAX_BASE_URL}/files/upload?GroupId=${cfg.minimaxGroupId}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${cfg.minimaxApiKey}` },
+    body: form,
+  });
+  const data = await res.json();
+  if (data?.base_resp?.status_code !== 0) {
+    throw new Error(data?.base_resp?.status_msg || 'MiniMax rechazó la subida del audio');
+  }
+  return data.file.file_id;
+}
+
+async function minimaxCloneVoice(cfg, fileId, voiceId) {
+  const res = await fetch(`${MINIMAX_BASE_URL}/voice_clone?GroupId=${cfg.minimaxGroupId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cfg.minimaxApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+      voice_id: voiceId,
+      // Incluir texto+modelo aquí genera una pequeña muestra de inmediato,
+      // lo cual además "activa" la voz clonada (si no se usa en un T2A
+      // dentro de 7 días, MiniMax la borra automáticamente).
+      text: 'Hola, esta es una prueba de la voz clonada para el asistente.',
+      model: 'speech-2.8-hd',
+    }),
+  });
+  const data = await res.json();
+  if (data?.base_resp?.status_code !== 0) {
+    throw new Error(data?.base_resp?.status_msg || 'MiniMax no pudo clonar la voz');
+  }
+  return true;
+}
+
+async function minimaxTextToSpeech(cfg, text) {
+  const res = await fetch(`${MINIMAX_BASE_URL}/t2a_v2?GroupId=${cfg.minimaxGroupId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cfg.minimaxApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'speech-2.8-hd',
+      text,
+      stream: false,
+      output_format: 'hex',
+      voice_setting: { voice_id: cfg.minimaxVoiceId, speed: 1, vol: 1, pitch: 0 },
+      audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 },
+    }),
+  });
+  const data = await res.json();
+  if (!data?.data?.audio) {
+    throw new Error(data?.base_resp?.status_msg || 'MiniMax no devolvió audio');
+  }
+  return Buffer.from(data.data.audio, 'hex');
+}
+
+async function sendVoiceReply(userId, text) {
+  const cfg = readConfig();
+  const audioBuffer = await minimaxTextToSpeech(cfg, text);
+  const tmpPath = path.join(TMP_DIR, `voice-reply-${Date.now()}.mp3`);
+  fs.writeFileSync(tmpPath, audioBuffer);
+  try {
+    const media = MessageMedia.fromFilePath(tmpPath);
+    // sendAudioAsVoice: true hace que llegue como nota de voz (con el ícono
+    // de micrófono), no como un archivo de audio adjunto normal.
+    await client.sendMessage(userId, media, { sendAudioAsVoice: true });
+  } finally {
+    fs.unlink(tmpPath, () => {});
+  }
+}
+
+// ---------- Notificación de venta al número del dueño ----------
+function normalizeWhatsAppNumber(rawNumber) {
+  // Acepta números escritos con +, espacios o guiones y los deja listos
+  // para WhatsApp (solo dígitos + "@c.us").
+  const digitsOnly = (rawNumber || '').replace(/[^\d]/g, '');
+  return digitsOnly ? `${digitsOnly}@c.us` : null;
+}
+
+async function notifyOwnerOfSale(cfg, clientUserId, reply) {
+  const ownerJid = normalizeWhatsAppNumber(cfg.notificationPhoneNumber);
+  if (!ownerJid) return;
+  const clientNumber = (clientUserId || '').replace('@c.us', '');
+  const notification =
+    `🛎️ *Nueva venta registrada*\n` +
+    `📱 Cliente: ${clientNumber}\n\n` +
+    `${reply}`;
+  await client.sendMessage(ownerJid, notification);
 }
 
 // ---------- IA: llamada según proveedor configurado (con soporte de tools) ----------
@@ -600,7 +723,31 @@ function startBot() {
       const reply = (aiMessage.content || '').trim() || 'Listo 😊';
       history.push({ role: 'assistant', content: reply });
       saveConversations();
-      await msg.reply(reply);
+
+      // ---- Responder con audio (voz clonada) si está activado, si no, texto normal ----
+      const voiceReady = cfg.voiceEnabled && cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
+      if (voiceReady) {
+        try {
+          await sendVoiceReply(userId, reply);
+        } catch (err) {
+          console.error('Error generando audio con MiniMax, se responde en texto:', err);
+          io.emit('log', `⚠️ Falló la voz (MiniMax), respondí en texto: ${err.message}`);
+          await msg.reply(reply);
+        }
+      } else {
+        await msg.reply(reply);
+      }
+
+      // ---- Si esta respuesta cerró una venta, avisar al número del dueño ----
+      if (reply.includes('ORDEN DE COMPRA REGISTRADA') && cfg.notificationPhoneNumber) {
+        try {
+          await notifyOwnerOfSale(cfg, userId, reply);
+          io.emit('log', `🛎️ Venta notificada a ${cfg.notificationPhoneNumber}`);
+        } catch (err) {
+          console.error('Error notificando la venta:', err);
+          io.emit('log', `⚠️ No se pudo notificar la venta: ${err.message}`);
+        }
+      }
 
       io.emit('log', `💬 ${userId}: ${messageText}`);
     } catch (err) {
@@ -673,6 +820,32 @@ app.post('/api/quit-app', async (req, res) => {
       process.exit(0);
     }
   }, 500);
+});
+
+// ---------- API: voz clonada (MiniMax) ----------
+app.post('/api/voice/clone', uploadVoiceSample, async (req, res) => {
+  try {
+    const cfg = readConfig();
+    if (!cfg.minimaxApiKey || !cfg.minimaxGroupId) {
+      return res.status(400).json({ error: 'Falta configurar la API Key y/o el Group ID de MiniMax' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'No llegó ningún archivo de audio' });
+    }
+
+    const voiceId = `inv360_${Date.now()}`;
+    const fileId = await minimaxUploadSample(cfg, req.file.path, req.file.mimetype);
+    await minimaxCloneVoice(cfg, fileId, voiceId);
+
+    const updated = { ...cfg, minimaxVoiceId: voiceId };
+    writeConfig(updated);
+
+    res.json({ ok: true, voiceId, message: 'Voz clonada correctamente.' });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo clonar la voz: ' + err.message });
+  } finally {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  }
 });
 
 // ---------- API: revisar y aplicar actualizaciones ----------
