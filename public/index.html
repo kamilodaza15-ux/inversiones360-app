@@ -45,7 +45,9 @@
       <div class="card center">
         <button id="startBtn" class="start-btn">▶ Iniciar asistente</button>
         <button id="logoutBtn" class="cancel-btn" style="margin-left:10px">🔌 Cerrar sesión de WhatsApp</button>
+        <button id="quitAppBtn" class="cancel-btn" style="margin-left:10px">🛑 Cerrar bot completamente</button>
         <p id="qrHint" class="hint">Presiona "Iniciar" y escanea el QR que aparecerá aquí con WhatsApp Business.</p>
+        <p class="hint small">"Cerrar sesión de WhatsApp" solo desvincula el número (pide QR de nuevo). "Cerrar bot completamente" apaga la app entera — deja de responder mensajes hasta que la vuelvas a abrir.</p>
         <img id="qrImage" class="qr-img" style="display:none" />
         <div id="log" class="log"></div>
       </div>
@@ -78,13 +80,28 @@
 
         <label>Groq API Key</label>
         <input id="cfg-groqApiKey" type="text" placeholder="gsk_..." />
+        <p class="hint small">¿No tienes clave de Groq? <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Consíguela gratis aquí</a> (Groq → API Keys → Create API Key).</p>
         <label>Modelo de Groq</label>
-        <input id="cfg-groqModel" type="text" />
+        <select id="cfg-groqModel">
+          <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (recomendado: rápido y barato)</option>
+          <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (más potente, más lento)</option>
+          <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b</option>
+          <option value="meta-llama/llama-4-scout-17b-16e-instruct">meta-llama/llama-4-scout-17b-16e-instruct</option>
+          <option value="__custom__">Otro (escribir manualmente)...</option>
+        </select>
+        <input id="cfg-groqModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
 
         <label>OpenAI API Key</label>
         <input id="cfg-openaiApiKey" type="text" placeholder="sk-..." />
+        <p class="hint small">¿No tienes clave de OpenAI? <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Consíguela aquí</a> (requiere cuenta con saldo cargado).</p>
         <label>Modelo de OpenAI</label>
-        <input id="cfg-openaiModel" type="text" />
+        <select id="cfg-openaiModel">
+          <option value="gpt-5.4-mini">gpt-5.4-mini (recomendado: rápido y barato)</option>
+          <option value="gpt-5.4">gpt-5.4 (más potente, más caro)</option>
+          <option value="gpt-5.4-nano">gpt-5.4-nano (el más económico)</option>
+          <option value="__custom__">Otro (escribir manualmente)...</option>
+        </select>
+        <input id="cfg-openaiModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
 
         <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
         <span id="configSaved" class="saved-msg"></span>
@@ -126,6 +143,11 @@
           <label>Imágenes del producto (puedes elegir varias)</label>
           <input id="p-images" type="file" accept="image/*" multiple />
           <p class="hint small">Si el cliente pide "fotos" o "más imágenes", Ángela envía todas las que subas aquí.</p>
+
+          <label>Video del producto (opcional, uno solo)</label>
+          <input id="p-video" type="file" accept="video/*" />
+          <p class="hint small" id="p-video-current"></p>
+          <p class="hint small">Si el cliente pide "video" o "cómo funciona", Ángela lo envía. Usa clips cortos (máx. ~50 MB) para que se envíe rápido por WhatsApp.</p>
 
           <button type="submit" class="save-btn">Guardar producto</button>
           <button type="button" id="cancelEditBtn" class="cancel-btn" style="display:none">Cancelar edición</button>

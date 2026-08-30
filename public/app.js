@@ -135,14 +135,58 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
 });
 
+document.getElementById('quitAppBtn').addEventListener('click', async () => {
+  if (
+    !confirm(
+      '¿Cerrar el bot completamente? Se apagará todo el proceso (no queda minimizado junto al reloj) y va a dejar de responder mensajes hasta que lo vuelvas a abrir.'
+    )
+  )
+    return;
+  logDiv.appendChild(Object.assign(document.createElement('div'), { textContent: '🛑 Cerrando la aplicación...' }));
+  await fetch('/api/quit-app', { method: 'POST' }).catch(() => {});
+  // La app se cierra sola desde aquí en adelante; no hay nada más que hacer en pantalla.
+});
+
 fetch('/api/status').then((r) => r.json()).then((d) => setStatus(d.status));
 
 // ---------- Configuración ----------
 const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
-  'responseDelaySeconds', 'aiProvider', 'groqApiKey', 'groqModel',
-  'openaiApiKey', 'openaiModel',
+  'responseDelaySeconds', 'aiProvider', 'groqApiKey',
+  'openaiApiKey',
 ];
+// groqModel y openaiModel se manejan aparte porque son selects con opción
+// "otro personalizado" (por si el modelo que quieren no está en la lista).
+
+function setupModelSelect(selectId, customId, value) {
+  const select = document.getElementById(selectId);
+  const custom = document.getElementById(customId);
+  const knownValues = Array.from(select.options)
+    .map((o) => o.value)
+    .filter((v) => v !== '__custom__');
+  if (value && !knownValues.includes(value)) {
+    select.value = '__custom__';
+    custom.value = value;
+    custom.style.display = 'block';
+  } else {
+    select.value = value || knownValues[0] || '';
+    custom.style.display = 'none';
+  }
+}
+
+function getModelValue(selectId, customId) {
+  const select = document.getElementById(selectId);
+  const custom = document.getElementById(customId);
+  return select.value === '__custom__' ? custom.value.trim() : select.value;
+}
+
+['cfg-groqModel', 'cfg-openaiModel'].forEach((selectId) => {
+  const select = document.getElementById(selectId);
+  const custom = document.getElementById(`${selectId}-custom`);
+  select.addEventListener('change', () => {
+    custom.style.display = select.value === '__custom__' ? 'block' : 'none';
+  });
+});
 
 async function loadConfig() {
   const cfg = await fetch('/api/config').then((r) => r.json());
@@ -150,6 +194,8 @@ async function loadConfig() {
     const el = document.getElementById(`cfg-${f}`);
     if (el) el.value = cfg[f] ?? '';
   });
+  setupModelSelect('cfg-groqModel', 'cfg-groqModel-custom', cfg.groqModel);
+  setupModelSelect('cfg-openaiModel', 'cfg-openaiModel-custom', cfg.openaiModel);
 }
 loadConfig();
 
@@ -159,6 +205,8 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
     const el = document.getElementById(`cfg-${f}`);
     body[f] = f === 'responseDelaySeconds' ? Number(el.value) : el.value;
   });
+  body.groqModel = getModelValue('cfg-groqModel', 'cfg-groqModel-custom');
+  body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -214,6 +262,7 @@ const formTitle = document.getElementById('formTitle');
 function resetProductForm() {
   productForm.reset();
   document.getElementById('p-id').value = '';
+  document.getElementById('p-video-current').textContent = '';
   cancelEditBtn.style.display = 'none';
   formTitle.textContent = 'Agregar producto';
 }
@@ -235,6 +284,7 @@ async function loadProducts() {
       .slice(0, 3)
       .map((img) => `<img src="${img}" onerror="this.style.visibility='hidden'" />`)
       .join('');
+    const videoBadge = p.video ? '<span class="price-tag after">🎥 Video</span>' : '';
     const item = document.createElement('div');
     item.className = 'product-item';
     item.innerHTML = `
@@ -242,6 +292,7 @@ async function loadProducts() {
       <div class="info">
         <b>${p.name}</b>
         ${priceTagHTML(p)}
+        ${videoBadge}
         <div class="kw">${(p.keywords || []).join(', ')}</div>
       </div>
       <div class="actions">
@@ -262,6 +313,9 @@ async function loadProducts() {
       document.getElementById('p-priceAfter').value = p.priceAfter || '';
       document.getElementById('p-keywords').value = (p.keywords || []).join(', ');
       document.getElementById('p-details').value = p.details;
+      document.getElementById('p-video-current').textContent = p.video
+        ? '🎥 Ya tiene un video cargado. Elige otro archivo aquí solo si quieres reemplazarlo.'
+        : '';
       cancelEditBtn.style.display = 'inline-block';
       formTitle.textContent = `Editando: ${p.name}`;
       document.querySelector('[data-tab="productos"]').click();
@@ -293,10 +347,17 @@ productForm.addEventListener('submit', async (e) => {
   formData.append('details', document.getElementById('p-details').value);
   const imageFiles = document.getElementById('p-images').files;
   for (const file of imageFiles) formData.append('images', file);
+  const videoFile = document.getElementById('p-video').files[0];
+  if (videoFile) formData.append('video', videoFile);
 
   const url = id ? `/api/products/${id}` : '/api/products';
   const method = id ? 'PUT' : 'POST';
-  await fetch(url, { method, body: formData });
+  const res = await fetch(url, { method, body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(err.error || 'No se pudo guardar el producto (revisa el tamaño/tipo del video).');
+    return;
+  }
 
   resetProductForm();
   loadProducts();
