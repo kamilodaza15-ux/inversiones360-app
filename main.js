@@ -2,6 +2,14 @@ const { app, BrowserWindow, Tray, Menu, shell } = require('electron');
 const path = require('path');
 const http = require('http');
 
+// Esta función queda disponible globalmente (mismo proceso de Node) para que
+// server.js pueda pedir el cierre completo de la app desde el botón del
+// panel web, sin necesitar IPC ni ventanas separadas.
+global.quitApp = function () {
+  app.isQuitting = true;
+  app.quit();
+};
+
 // Esto arranca tu servidor Express/whatsapp-web.js exactamente igual que
 // antes (server.js no cambia en nada). Solo lo hacemos correr DENTRO del
 // mismo proceso de Electron en vez de necesitar "npm start" aparte.
