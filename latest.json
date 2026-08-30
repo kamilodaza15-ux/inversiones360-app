@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
+  "version": "1.7.0",
   "notes": "Selectores de modelo, video de producto, y todo unificado en un solo repositorio",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
