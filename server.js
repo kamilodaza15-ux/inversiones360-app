@@ -13,7 +13,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.9.1';
+const CURRENT_VERSION = '1.9.2';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -38,8 +38,80 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 const crypto = require('crypto');
 const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
-ffmpeg.setFfmpegPath(ffmpegPath);
+
+// ---------- FFmpeg ----------
+// MiniMax devuelve el audio en MP3, pero WhatsApp necesita OGG/Opus para
+// enviarlo como nota de voz. En desarrollo ffmpeg-static funciona directamente.
+// En el EXE de Electron, Electron Builder mantiene app.asar y desempaqueta
+// ffmpeg-static en app.asar.unpacked para que Windows pueda ejecutar ffmpeg.exe.
+function resolveFfmpegPath() {
+  const candidates = [];
+
+  try {
+    const staticPath = require('ffmpeg-static');
+    if (staticPath) {
+      candidates.push(staticPath);
+
+      // Si ffmpeg-static devuelve una ruta dentro de app.asar, sustituimos
+      // app.asar por app.asar.unpacked, donde electron-builder lo desempaqueta.
+      if (staticPath.includes('app.asar')) {
+        candidates.push(staticPath.replace(/app\.asar([\\/])/i, 'app.asar.unpacked$1'));
+      }
+    }
+  } catch (err) {
+    console.warn('No se pudo cargar ffmpeg-static:', err.message);
+  }
+
+  // Rutas de respaldo para Windows/Electron empaquetado.
+  candidates.push(
+    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
+    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'bin', 'win32', 'x64', 'ffmpeg.exe')
+  );
+
+  if (process.resourcesPath) {
+    candidates.push(
+      path.join(
+        process.resourcesPath,
+        'app.asar.unpacked',
+        'node_modules',
+        'ffmpeg-static',
+        'ffmpeg.exe'
+      ),
+      path.join(
+        process.resourcesPath,
+        'app.asar.unpacked',
+        'node_modules',
+        'ffmpeg-static',
+        'bin',
+        'win32',
+        'x64',
+        'ffmpeg.exe'
+      )
+    );
+  }
+
+  // También permite usar un ffmpeg.exe colocado manualmente junto al programa.
+  candidates.push(
+    path.join(__dirname, 'ffmpeg.exe'),
+    path.join(__dirname, 'bin', 'ffmpeg.exe')
+  );
+
+  const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
+
+  for (const candidate of uniqueCandidates) {
+    if (fs.existsSync(candidate)) {
+      console.log('✅ FFmpeg encontrado:', candidate);
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    'FFmpeg no encontrado. Verifica que ffmpeg-static esté instalado y desempaquetado correctamente.'
+  );
+}
+
+const resolvedFfmpegPath = resolveFfmpegPath();
+ffmpeg.setFfmpegPath(resolvedFfmpegPath);
 
 // Convierte un mp3 (lo que devuelve MiniMax) a ogg/opus (lo que exige
 // WhatsApp para que una nota de voz se pueda reproducir del otro lado).
