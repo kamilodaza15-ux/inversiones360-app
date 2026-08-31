@@ -47,27 +47,43 @@ const ffmpeg = require('fluent-ffmpeg');
 function resolveFfmpegPath() {
   const candidates = [];
 
+  // 1. Ruta real de ffmpeg-static.
+  // Esta es la ruta que funciona en las instalaciones existentes.
   try {
     const staticPath = require('ffmpeg-static');
+
     if (staticPath) {
       candidates.push(staticPath);
 
-      // Si ffmpeg-static devuelve una ruta dentro de app.asar, sustituimos
-      // app.asar por app.asar.unpacked, donde electron-builder lo desempaqueta.
+      // En Electron empaquetado, ffmpeg-static puede devolver una ruta
+      // dentro de app.asar. Windows no puede ejecutar directamente un .exe
+      // que esté dentro del ASAR, así que probamos la versión desempaquetada.
       if (staticPath.includes('app.asar')) {
-        candidates.push(staticPath.replace(/app\.asar([\\/])/i, 'app.asar.unpacked$1'));
+        candidates.push(
+          staticPath.replace(/app\.asar([\\/])/i, 'app.asar.unpacked$1')
+        );
       }
     }
   } catch (err) {
     console.warn('No se pudo cargar ffmpeg-static:', err.message);
   }
 
-  // Rutas de respaldo para Windows/Electron empaquetado.
+  // 2. Instalaciones normales / actualizadas:
+  // __dirname/node_modules/ffmpeg-static/ffmpeg.exe
   candidates.push(
     path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
-    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'bin', 'win32', 'x64', 'ffmpeg.exe')
+    path.join(
+      __dirname,
+      'node_modules',
+      'ffmpeg-static',
+      'bin',
+      'win32',
+      'x64',
+      'ffmpeg.exe'
+    )
   );
 
+  // 3. Electron empaquetado con electron-builder.
   if (process.resourcesPath) {
     candidates.push(
       path.join(
@@ -90,7 +106,7 @@ function resolveFfmpegPath() {
     );
   }
 
-  // También permite usar un ffmpeg.exe colocado manualmente junto al programa.
+  // 4. Respaldo: FFmpeg colocado manualmente junto a la aplicación.
   candidates.push(
     path.join(__dirname, 'ffmpeg.exe'),
     path.join(__dirname, 'bin', 'ffmpeg.exe')
@@ -99,14 +115,19 @@ function resolveFfmpegPath() {
   const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
 
   for (const candidate of uniqueCandidates) {
-    if (fs.existsSync(candidate)) {
-      console.log('✅ FFmpeg encontrado:', candidate);
-      return candidate;
+    try {
+      if (fs.existsSync(candidate)) {
+        console.log('✅ FFmpeg encontrado:', candidate);
+        return candidate;
+      }
+    } catch (err) {
+      console.warn('No se pudo comprobar FFmpeg:', candidate, err.message);
     }
   }
 
   throw new Error(
-    'FFmpeg no encontrado. Verifica que ffmpeg-static esté instalado y desempaquetado correctamente.'
+    'FFmpeg no encontrado. Rutas comprobadas: ' +
+      uniqueCandidates.join(' | ')
   );
 }
 
@@ -1074,7 +1095,6 @@ app.post('/api/apply-update', async (req, res) => {
 
       const fileResponse = await fetch(url, { cache: 'no-store' });
       if (!fileResponse.ok) throw new Error(`No se pudo descargar ${relPath}`);
-      const newContent = await fileResponse.text();
 
       if (fs.existsSync(targetPath)) {
         const backupPath = `${targetPath}.bak-${Date.now()}`;
@@ -1082,7 +1102,16 @@ app.post('/api/apply-update', async (req, res) => {
       } else {
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       }
-      fs.writeFileSync(targetPath, newContent, 'utf8');
+
+      // Los archivos .exe son binarios: deben guardarse como bytes, no como texto.
+      if (safeRelPath.toLowerCase().endsWith('.exe')) {
+        const buffer = Buffer.from(await fileResponse.arrayBuffer());
+        fs.writeFileSync(targetPath, buffer);
+      } else {
+        const newContent = await fileResponse.text();
+        fs.writeFileSync(targetPath, newContent, 'utf8');
+      }
+
       updatedFiles.push(safeRelPath);
     }
 
