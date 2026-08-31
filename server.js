@@ -41,35 +41,38 @@ const ffmpeg = require('fluent-ffmpeg');
 
 // ---------- FFmpeg ----------
 // MiniMax devuelve el audio en MP3, pero WhatsApp necesita OGG/Opus para
-// enviarlo como nota de voz. En desarrollo ffmpeg-static funciona directamente.
-// En el EXE de Electron, Electron Builder mantiene app.asar y desempaqueta
-// ffmpeg-static en app.asar.unpacked para que Windows pueda ejecutar ffmpeg.exe.
+// enviarlo como nota de voz.
+//
+// IMPORTANTE:
+// En una instalación empaquetada con Electron, ffmpeg-static puede devolver
+// una ruta dentro de app.asar. Windows NO puede ejecutar directamente un
+// .exe desde dentro de app.asar, aunque fs.existsSync() diga que existe.
+//
+// Por eso, si la ruta de ffmpeg-static está dentro de app.asar, copiamos
+// automáticamente ffmpeg.exe a una carpeta real y escribible de Windows y
+// usamos esa copia para fluent-ffmpeg. Esto permite reparar instalaciones
+// existentes mediante una actualización de server.js, sin pedir al cliente
+// que reinstale ni que ejecute comandos.
 function resolveFfmpegPath() {
   const candidates = [];
 
-  // 1. Ruta real de ffmpeg-static.
-  // Esta es la ruta que funciona en las instalaciones existentes.
+  let staticPath = null;
+
   try {
-    const staticPath = require('ffmpeg-static');
+    staticPath = require('ffmpeg-static');
 
     if (staticPath) {
-      candidates.push(staticPath);
-
-      // En Electron empaquetado, ffmpeg-static puede devolver una ruta
-      // dentro de app.asar. Windows no puede ejecutar directamente un .exe
-      // que esté dentro del ASAR, así que probamos la versión desempaquetada.
-      if (staticPath.includes('app.asar')) {
-        candidates.push(
-          staticPath.replace(/app\.asar([\\/])/i, 'app.asar.unpacked$1')
-        );
+      // Si Electron empaquetó ffmpeg dentro de app.asar, NO devolver esa ruta
+      // para ejecución. La trataremos más abajo copiándola fuera del asar.
+      if (!/app\.asar([\\/]|$)/i.test(staticPath)) {
+        candidates.push(staticPath);
       }
     }
   } catch (err) {
     console.warn('No se pudo cargar ffmpeg-static:', err.message);
   }
 
-  // 2. Instalaciones normales / actualizadas:
-  // __dirname/node_modules/ffmpeg-static/ffmpeg.exe
+  // Rutas de respaldo para instalaciones no empaquetadas.
   candidates.push(
     path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
     path.join(
@@ -83,7 +86,7 @@ function resolveFfmpegPath() {
     )
   );
 
-  // 3. Electron empaquetado con electron-builder.
+  // Rutas típicas de Electron Builder cuando ffmpeg-static está desempaquetado.
   if (process.resourcesPath) {
     candidates.push(
       path.join(
@@ -106,33 +109,74 @@ function resolveFfmpegPath() {
     );
   }
 
-  // 4. Respaldo: FFmpeg colocado manualmente junto a la aplicación.
+  // FFmpeg colocado manualmente junto al programa.
   candidates.push(
     path.join(__dirname, 'ffmpeg.exe'),
     path.join(__dirname, 'bin', 'ffmpeg.exe')
   );
 
-  const uniqueCandidates = [...new Set(candidates.filter(Boolean))];
+  // Primero usamos una ruta que exista y que NO esté dentro de app.asar.
+  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+    if (
+      fs.existsSync(candidate) &&
+      !/app\.asar([\\/]|$)/i.test(candidate)
+    ) {
+      console.log('✅ FFmpeg encontrado:', candidate);
+      return candidate;
+    }
+  }
 
-  for (const candidate of uniqueCandidates) {
+  // Si ffmpeg-static está dentro de app.asar, lo copiamos fuera del asar.
+  // LOCALAPPDATA es escribible por el usuario y no requiere permisos de
+  // administrador. Se usa una carpeta propia de la aplicación.
+  if (
+    staticPath &&
+    /app\.asar([\\/]|$)/i.test(staticPath) &&
+    fs.existsSync(staticPath)
+  ) {
+    const localAppData =
+      process.env.LOCALAPPDATA ||
+      process.env.APPDATA ||
+      path.join(os.homedir(), 'AppData', 'Local');
+
+    const runtimeDir = path.join(
+      localAppData,
+      'Inversiones360Chat',
+      'ffmpeg-runtime'
+    );
+    const runtimePath = path.join(runtimeDir, 'ffmpeg.exe');
+
     try {
-      if (fs.existsSync(candidate)) {
-        console.log('✅ FFmpeg encontrado:', candidate);
-        return candidate;
+      fs.mkdirSync(runtimeDir, { recursive: true });
+
+      // Copiamos la versión incluida en la aplicación a una ubicación real.
+      // Si ya existe, la reemplazamos para asegurarnos de usar la versión
+      // correspondiente a la aplicación actualizada.
+      fs.copyFileSync(staticPath, runtimePath);
+
+      if (fs.existsSync(runtimePath)) {
+        console.log('✅ FFmpeg extraído fuera de app.asar:', runtimePath);
+        return runtimePath;
       }
     } catch (err) {
-      console.warn('No se pudo comprobar FFmpeg:', candidate, err.message);
+      console.warn(
+        '⚠️ No se pudo extraer FFmpeg fuera de app.asar:',
+        err.message
+      );
     }
   }
 
   throw new Error(
-    'FFmpeg no encontrado. Rutas comprobadas: ' +
-      uniqueCandidates.join(' | ')
+    'FFmpeg no encontrado o no se pudo extraer para su ejecución. ' +
+    'Ruta detectada por ffmpeg-static: ' +
+    (staticPath || 'ninguna')
   );
 }
 
 const resolvedFfmpegPath = resolveFfmpegPath();
+console.log('🎙️ FFmpeg que usará fluent-ffmpeg:', resolvedFfmpegPath);
 ffmpeg.setFfmpegPath(resolvedFfmpegPath);
+
 
 // Convierte un mp3 (lo que devuelve MiniMax) a ogg/opus (lo que exige
 // WhatsApp para que una nota de voz se pueda reproducir del otro lado).
@@ -1095,6 +1139,7 @@ app.post('/api/apply-update', async (req, res) => {
 
       const fileResponse = await fetch(url, { cache: 'no-store' });
       if (!fileResponse.ok) throw new Error(`No se pudo descargar ${relPath}`);
+      const newContent = await fileResponse.text();
 
       if (fs.existsSync(targetPath)) {
         const backupPath = `${targetPath}.bak-${Date.now()}`;
@@ -1102,16 +1147,7 @@ app.post('/api/apply-update', async (req, res) => {
       } else {
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       }
-
-      // Los archivos .exe son binarios: deben guardarse como bytes, no como texto.
-      if (safeRelPath.toLowerCase().endsWith('.exe')) {
-        const buffer = Buffer.from(await fileResponse.arrayBuffer());
-        fs.writeFileSync(targetPath, buffer);
-      } else {
-        const newContent = await fileResponse.text();
-        fs.writeFileSync(targetPath, newContent, 'utf8');
-      }
-
+      fs.writeFileSync(targetPath, newContent, 'utf8');
       updatedFiles.push(safeRelPath);
     }
 
