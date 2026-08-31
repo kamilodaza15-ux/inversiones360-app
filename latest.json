@@ -1,6 +1,6 @@
 {
-  "version": "1.15.1",
-  "notes": "Aviso automático cuando un cliente cancela su pedido, y las notificaciones ahora incluyen un link para abrir el chat del cliente directo.",
+  "version": "1.15.2",
+  "notes": "Sincroniza main.js, index.html, app.js y style.css completos (por si tu instalación se había quedado atrás en alguno de esos).",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
