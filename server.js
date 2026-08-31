@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.12.0';
+const CURRENT_VERSION = '1.13.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -247,6 +247,38 @@ function getLocalNetworkIP() {
     }
   }
   return null;
+}
+
+// Revisa (sin pedir permisos de administrador, solo para consultar) si el
+// Firewall de Windows ya tiene un permiso para este puerto, y si la red
+// actual está marcada como "Pública" (Windows bloquea más cosas por
+// defecto en redes públicas). Si algo falla al revisar (por ejemplo, en un
+// futuro esto corre en Linux/Mac), simplemente no mostramos el aviso — no
+// afecta el resto de la app.
+function checkFirewallStatus(port) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    const script = `
+$portRule = Get-NetFirewallRule -Direction Inbound -Enabled True -Action Allow -ErrorAction SilentlyContinue | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -eq '${port}' -or $_.LocalPort -eq 'Any' }
+$profiles = (Get-NetConnectionProfile -ErrorAction SilentlyContinue).NetworkCategory -join ','
+$result = @{ firewallAllows = [bool]$portRule; networkCategories = $profiles }
+$result | ConvertTo-Json -Compress
+`.trim();
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    const { exec } = require('child_process');
+    exec(
+      `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`,
+      { timeout: 6000 },
+      (err, stdout) => {
+        if (err) return resolve(null);
+        try {
+          resolve(JSON.parse(stdout.trim()));
+        } catch (e) {
+          resolve(null);
+        }
+      }
+    );
+  });
 }
 
 function readLicense() {
@@ -1128,7 +1160,8 @@ app.get('/api/network-info', async (req, res) => {
     }
     const url = `http://${ip}:${PORT}`;
     const qrDataUrl = await QRCode.toDataURL(url);
-    res.json({ available: true, url, qrDataUrl });
+    const firewallStatus = await checkFirewallStatus(PORT); // null si no se pudo revisar
+    res.json({ available: true, url, qrDataUrl, firewallStatus, port: PORT });
   } catch (err) {
     res.status(500).json({ available: false, error: err.message });
   }
