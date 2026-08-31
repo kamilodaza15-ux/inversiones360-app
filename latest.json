@@ -1,6 +1,6 @@
 {
-  "version": "1.15.4",
-  "notes": "Se quitó la detección automática del firewall (daba falsos positivos); ahora el comando queda siempre disponible como referencia, sin alarmar sin certeza.",
+  "version": "1.15.5",
+  "notes": "Arregla que el audio dijera 'dólares' en vez de 'pesos' al leer el precio.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
