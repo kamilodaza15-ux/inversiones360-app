@@ -6,14 +6,28 @@ const fs = require('fs');
 const multer = require('multer');
 const QRCode = require('qrcode');
 const { Server } = require('socket.io');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Boom } = require('@hapi/boom');
+
+// Baileys se publica como módulo "ESM" (formato moderno de JavaScript),
+// mientras que el resto de este proyecto usa "CommonJS" (require clásico).
+// No se pueden mezclar con un require() normal — hay que usar import()
+// dinámico, que sí sabe leer módulos ESM desde código CommonJS. Como
+// import() es asíncrono, cargamos Baileys una sola vez, la primera vez que
+// arranca el bot (dentro de startBot(), que ya es una función async).
+let baileysModule = null;
+async function loadBaileys() {
+  if (!baileysModule) {
+    baileysModule = await import('@whiskeysockets/baileys');
+  }
+  return baileysModule;
+}
 
 // ---------- Sistema de actualizaciones ----------
 // Cada vez que mejores el código: 1) subes ESTE archivo (server.js) actualizado
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.9.5';
+const CURRENT_VERSION = '1.10.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -185,6 +199,16 @@ function ensureFfmpegConfigured() {
     cachedFfmpegPath = resolveFfmpegPath();
     console.log('🎙️ FFmpeg que usará fluent-ffmpeg:', cachedFfmpegPath);
     ffmpeg.setFfmpegPath(cachedFfmpegPath);
+
+    // Baileys también necesita "ffmpeg" para procesar audio (por ejemplo,
+    // para calcular la forma de onda de las notas de voz) y lo busca por su
+    // cuenta en el PATH del sistema, sin que podamos indicarle la ruta
+    // directamente. Agregamos la carpeta de nuestro ffmpeg ya resuelto al
+    // PATH de este proceso, así Baileys lo encuentra igual que fluent-ffmpeg.
+    const ffmpegDir = path.dirname(cachedFfmpegPath);
+    if (!process.env.PATH.includes(ffmpegDir)) {
+      process.env.PATH = `${ffmpegDir}${path.delimiter}${process.env.PATH}`;
+    }
   }
   return cachedFfmpegPath;
 }
@@ -460,8 +484,7 @@ async function sendProductImages(userId, product) {
   for (const imgRelPath of product.images) {
     const imgPath = path.join(__dirname, imgRelPath.replace(/^\//, ''));
     if (fs.existsSync(imgPath)) {
-      const media = MessageMedia.fromFilePath(imgPath);
-      await client.sendMessage(userId, media);
+      await sock.sendMessage(userId, { image: fs.readFileSync(imgPath) });
     }
   }
   return true;
@@ -475,10 +498,7 @@ async function sendProductVideo(userId, product) {
   if (!fs.existsSync(videoPath)) {
     return false;
   }
-  const media = MessageMedia.fromFilePath(videoPath);
-  // sendMediaAsDocument evita que WhatsApp recomprima demasiado el video y
-  // ayuda con archivos más pesados; para clips cortos se ve igual de bien.
-  await client.sendMessage(userId, media);
+  await sock.sendMessage(userId, { video: fs.readFileSync(videoPath) });
   return true;
 }
 
@@ -581,8 +601,9 @@ async function sendVoiceReply(userId, text) {
     // archivo pero no lo puede reproducir ("no se pudo descargar el audio").
     await convertMp3ToOggOpus(mp3Path, oggPath);
     const oggBuffer = fs.readFileSync(oggPath);
-    const media = new MessageMedia('audio/ogg; codecs=opus', oggBuffer.toString('base64'), 'voice.ogg');
-    await client.sendMessage(userId, media, { sendAudioAsVoice: true });
+    // ptt: true hace que llegue como nota de voz (con el ícono de
+    // micrófono), no como un archivo de audio adjunto normal.
+    await sock.sendMessage(userId, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
   } finally {
     fs.unlink(mp3Path, () => {});
     fs.unlink(oggPath, () => {});
@@ -592,20 +613,21 @@ async function sendVoiceReply(userId, text) {
 // ---------- Notificación de venta al número del dueño ----------
 function normalizeWhatsAppNumber(rawNumber) {
   // Acepta números escritos con +, espacios o guiones y los deja listos
-  // para WhatsApp (solo dígitos + "@c.us").
+  // para WhatsApp (solo dígitos + "@s.whatsapp.net", que es como Baileys
+  // identifica los chats individuales).
   const digitsOnly = (rawNumber || '').replace(/[^\d]/g, '');
-  return digitsOnly ? `${digitsOnly}@c.us` : null;
+  return digitsOnly ? `${digitsOnly}@s.whatsapp.net` : null;
 }
 
 async function notifyOwnerOfSale(cfg, clientUserId, reply) {
   const ownerJid = normalizeWhatsAppNumber(cfg.notificationPhoneNumber);
   if (!ownerJid) return;
-  const clientNumber = (clientUserId || '').replace('@c.us', '');
+  const clientNumber = (clientUserId || '').split('@')[0];
   const notification =
     `🛎️ *Nueva venta registrada*\n` +
     `📱 Cliente: ${clientNumber}\n\n` +
     `${reply}`;
-  await client.sendMessage(ownerJid, notification);
+  await sock.sendMessage(ownerJid, { text: notification });
 }
 
 // ---------- IA: llamada según proveedor configurado (con soporte de tools) ----------
@@ -723,7 +745,7 @@ function sleep(ms) {
 }
 
 // ---------- Cliente de WhatsApp ----------
-let client = null;
+let sock = null;
 let botStatus = 'stopped'; // stopped | starting | qr | connected
 const MAX_HISTORY = 12;
 
@@ -773,72 +795,112 @@ function enqueueForUser(userId, task) {
   return next;
 }
 
-function startBot() {
-  if (client) return;
+async function startBot() {
+  if (sock) return;
   botStatus = 'starting';
   io.emit('status', botStatus);
 
-  client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './session' }),
-    puppeteer: {
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    },
+  // Deja el ffmpeg (necesario para las notas de voz) listo desde ahora, antes
+  // de que lleguen mensajes — si falla, solo se pierde la función de voz, el
+  // resto del bot sigue funcionando normal.
+  try {
+    ensureFfmpegConfigured();
+  } catch (e) {
+    console.warn('⚠️ FFmpeg no disponible, la voz clonada no va a funcionar:', e.message);
+  }
+
+  const {
+    default: makeWASocket,
+    DisconnectReason,
+    useMultiFileAuthState,
+    downloadMediaMessage,
+  } = await loadBaileys();
+
+  const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+  sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false, // el QR lo dibujamos nosotros mismos, como imagen en el panel
   });
 
-  client.on('qr', async (qr) => {
-    botStatus = 'qr';
-    const qrImage = await QRCode.toDataURL(qr);
-    io.emit('qr', qrImage);
-    io.emit('status', botStatus);
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      botStatus = 'qr';
+      const qrImage = await QRCode.toDataURL(qr);
+      io.emit('qr', qrImage);
+      io.emit('status', botStatus);
+    }
+
+    if (connection === 'open') {
+      botStatus = 'connected';
+      io.emit('status', botStatus);
+      io.emit('log', `✅ Bot conectado. (versión ${CURRENT_VERSION})`);
+    }
+
+    if (connection === 'close') {
+      const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      botStatus = 'stopped';
+      io.emit('status', botStatus);
+      io.emit('log', `⚠️ Desconectado. ${shouldReconnect ? 'Reintentando conexión...' : 'Sesión cerrada.'}`);
+      sock = null;
+      if (shouldReconnect) {
+        startBot().catch((err) => console.error('Error reconectando:', err));
+      }
+    }
   });
 
-  client.on('ready', () => {
-    botStatus = 'connected';
-    io.emit('status', botStatus);
-    io.emit('log', `✅ Bot conectado. (versión ${CURRENT_VERSION})`);
-  });
-
-  client.on('disconnected', (reason) => {
-    botStatus = 'stopped';
-    io.emit('status', botStatus);
-    io.emit('log', `⚠️ Desconectado: ${reason}`);
-    client = null;
-  });
-
-  client.on('message', async (msg) => {
-    if (msg.from.includes('@g.us') || msg.isStatus) return;
-    // Encola el mensaje: si el mismo cliente manda varios seguidos, se procesan
-    // uno por uno y en orden, sin pisarse entre sí.
-    enqueueForUser(msg.from, () => processMessage(msg));
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      if (msg.key.fromMe) continue;
+      if (msg.key.remoteJid?.endsWith('@g.us')) continue;
+      if (msg.key.remoteJid === 'status@broadcast') continue;
+      // Encola el mensaje: si el mismo cliente manda varios seguidos, se procesan
+      // uno por uno y en orden, sin pisarse entre sí.
+      enqueueForUser(msg.key.remoteJid, () => processMessage(msg));
+    }
   });
 
   async function processMessage(msg) {
     try {
       const cfg = readConfig();
-      const userId = msg.from;
+      const userId = msg.key.remoteJid;
       const isNewUser = !seenUsers.has(userId);
       seenUsers.add(userId);
 
+      const rawText =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        '';
+
       // ---- Notas de voz: transcribir antes de seguir el flujo normal ----
-      let messageText = msg.body;
-      const isVoiceMessage = msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio');
+      let messageText = rawText;
+      const audioMsg = msg.message?.audioMessage;
+      const isVoiceMessage = !!audioMsg;
       if (isVoiceMessage) {
         try {
-          const media = await msg.downloadMedia();
+          const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+            reuploadRequest: sock.updateMediaMessage,
+          });
           io.emit('log', `🎙️ Transcribiendo audio de ${userId}...`);
-          messageText = await transcribeAudio(media.data, media.mimetype);
+          messageText = await transcribeAudio(buffer.toString('base64'), audioMsg.mimetype);
           if (!messageText) {
-            await msg.reply('No logré entender el audio 🙏. ¿Me lo puedes escribir?');
+            await sock.sendMessage(userId, { text: 'No logré entender el audio 🙏. ¿Me lo puedes escribir?' });
             return;
           }
           io.emit('log', `🎙️ Transcripción: ${messageText}`);
         } catch (e) {
           console.error('Error transcribiendo audio:', e);
-          await msg.reply('No pude procesar el audio 🙏. ¿Me lo escribes en texto?');
+          await sock.sendMessage(userId, { text: 'No pude procesar el audio 🙏. ¿Me lo escribes en texto?' });
           return;
         }
       }
+
+      if (!messageText) return; // otro tipo de mensaje (sticker, ubicación, etc.) — lo ignoramos por ahora
 
       if (!conversations.has(userId)) {
         conversations.set(userId, [{ role: 'system', content: buildSystemPrompt() }]);
@@ -853,14 +915,13 @@ function startBot() {
       saveConversations();
 
       try {
-        const chat = await msg.getChat();
-        await chat.sendStateTyping();
+        await sock.sendPresenceUpdate('composing', userId);
       } catch (e) {
         // sin problema si no se puede mostrar "escribiendo..."
       }
 
       if (isNewUser) {
-        await client.sendMessage(userId, cfg.welcomeMessage);
+        await sock.sendMessage(userId, { text: cfg.welcomeMessage });
       }
 
       await sleep((cfg.responseDelaySeconds ?? 5) * 1000);
@@ -928,10 +989,10 @@ function startBot() {
         } catch (err) {
           console.error('Error generando audio con MiniMax, se responde en texto:', err);
           io.emit('log', `⚠️ Falló la voz (MiniMax), respondí en texto: ${err.message}`);
-          await msg.reply(reply);
+          await sock.sendMessage(userId, { text: reply });
         }
       } else {
-        await msg.reply(reply);
+        await sock.sendMessage(userId, { text: reply });
       }
 
       // ---- Si esta respuesta cerró una venta, avisar al número del dueño ----
@@ -954,16 +1015,19 @@ function startBot() {
         ? 'Estamos con muchos mensajes en este momento 🙏. Dame un minuto y te respondo enseguida.'
         : 'Disculpa, tuve un problema técnico 🙏. ¿Puedes repetir tu mensaje?';
       try {
-        await msg.reply(fallbackMsg);
+        await sock.sendMessage(msg.key.remoteJid, { text: fallbackMsg });
       } catch (e) {}
     }
   }
-
-  client.initialize();
 }
 
 app.post('/api/start', (req, res) => {
-  startBot();
+  startBot().catch((err) => {
+    console.error('Error arrancando el bot:', err);
+    botStatus = 'stopped';
+    io.emit('status', botStatus);
+    io.emit('log', `❌ No se pudo iniciar: ${err.message}`);
+  });
   res.json({ status: botStatus });
 });
 
@@ -972,13 +1036,13 @@ app.get('/api/status', (req, res) => res.json({ status: botStatus }));
 // ---------- API: cerrar sesión de WhatsApp (desvincula el número, conserva la app abierta) ----------
 app.post('/api/logout', async (req, res) => {
   try {
-    if (client) {
+    if (sock) {
       try {
-        await client.destroy();
+        await sock.logout();
       } catch (e) {
-        console.error('Error destruyendo cliente:', e);
+        console.error('Error cerrando sesión:', e);
       }
-      client = null;
+      sock = null;
     }
     botStatus = 'stopped';
     io.emit('status', botStatus);
@@ -1003,11 +1067,11 @@ app.post('/api/quit-app', async (req, res) => {
   res.json({ ok: true });
   io.emit('log', '🛑 Cerrando el asistente...');
   try {
-    if (client) {
-      await client.destroy();
+    if (sock) {
+      sock.end(undefined);
     }
   } catch (e) {
-    console.error('Error cerrando cliente antes de salir:', e);
+    console.error('Error cerrando la conexión antes de salir:', e);
   }
   setTimeout(() => {
     if (typeof global.quitApp === 'function') {
