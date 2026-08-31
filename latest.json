@@ -1,6 +1,6 @@
 {
   "version": "1.9.2",
-  "notes": "Corrección de audio MiniMax: FFmpeg se detecta correctamente en la instalación.",
+  "notes": "Corrección de audio MiniMax y detección de FFmpeg.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js"
   }
