@@ -6,6 +6,7 @@
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
     "main.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/main.js",
     "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
-    "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
+    "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js",
+    "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
   }
 }
