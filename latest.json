@@ -1,7 +1,9 @@
 {
-  "version": "1.9.4",
-  "notes": "Corrección definitiva de audio MiniMax y FFmpeg.",
+  "version": "1.9.5",
+  "notes": "Botón para probar la voz clonada desde el panel (sin enviar nada a clientes).",
   "files": {
-    "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js"
+    "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
+    "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
+    "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
   }
 }
