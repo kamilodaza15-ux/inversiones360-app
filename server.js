@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.15.4';
+const CURRENT_VERSION = '1.15.5';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -673,9 +673,21 @@ async function minimaxTextToSpeech(cfg, text) {
   return Buffer.from(data.data.audio, 'hex');
 }
 
+// MiniMax lee el símbolo "$" como dólares por defecto, sin importar lo que
+// diga el texto alrededor — es una limitación de su lector de voz, no algo
+// que se arregle con el prompt. La solución es quitar el símbolo antes de
+// mandarlo a hablar, dejando la palabra "pesos" en su lugar. Esto SOLO
+// afecta el audio — el texto normal en WhatsApp se sigue viendo igual.
+function prepareTextForSpeech(text) {
+  return text
+    .replace(/\$\s?([\d.,]+)/g, '$1 pesos') // "$99.900" -> "99.900 pesos"
+    .replace(/\bCOP\b/gi, ''); // evita que quede "99.900 pesos COP" repetido
+}
+
 async function sendVoiceReply(userId, text) {
   const cfg = readConfig();
-  const audioBuffer = await minimaxTextToSpeech(cfg, text);
+  const speechText = prepareTextForSpeech(text);
+  const audioBuffer = await minimaxTextToSpeech(cfg, speechText);
   const mp3Path = path.join(TMP_DIR, `voice-reply-${Date.now()}.mp3`);
   const oggPath = mp3Path.replace(/\.mp3$/, '.ogg');
   fs.writeFileSync(mp3Path, audioBuffer);
@@ -1294,7 +1306,7 @@ app.post('/api/voice/preview', async (req, res) => {
     const text = (req.body.text || '').trim();
     if (!text) return res.status(400).json({ error: 'Escribe un texto para probar' });
 
-    const audioBuffer = await minimaxTextToSpeech(cfg, text);
+    const audioBuffer = await minimaxTextToSpeech(cfg, prepareTextForSpeech(text));
     res.json({ ok: true, audioBase64: audioBuffer.toString('base64') });
   } catch (err) {
     res.status(500).json({ error: 'No se pudo generar el audio de prueba: ' + err.message });
