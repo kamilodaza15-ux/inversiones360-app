@@ -1,9 +1,10 @@
 {
-  "version": "1.10.0",
-  "notes": "Migración a Baileys: arregla la transcripción de audios entrantes, instalación más liviana (sin Chromium).",
+  "version": "1.12.0",
+  "notes": "Panel accesible desde el celular u otra PC en la misma red WiFi (con QR para entrar sin escribir nada).",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
-    "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json"
-  },
-  "newDependencies": ["@whiskeysockets/baileys", "@hapi/boom"]
+    "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
+    "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
+    "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
+  }
 }
