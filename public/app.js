@@ -61,7 +61,14 @@ async function checkUpdateBannerOnLoad() {
           const res = await fetch('/api/apply-update', { method: 'POST' }).then((r) => r.json());
           if (res.ok) {
             banner.style.background = '#dcfce7';
-            banner.innerHTML = `<span style="color:#16a34a">✔ ${res.message}</span>`;
+            banner.innerHTML = `
+              <span style="color:#16a34a">✔ ${res.message}</span>
+              <button id="bannerRestartBtn" class="save-btn" style="white-space:nowrap">🔄 Reiniciar ahora</button>
+            `;
+            document.getElementById('bannerRestartBtn').addEventListener('click', async () => {
+              banner.innerHTML = '🔄 Reiniciando...';
+              await fetch('/api/restart-app', { method: 'POST' }).catch(() => {});
+            });
           } else {
             banner.style.background = '#fee2e2';
             banner.innerHTML = `<span style="color:#dc2626">${res.error}</span>`;
@@ -145,6 +152,13 @@ document.getElementById('quitAppBtn').addEventListener('click', async () => {
   logDiv.appendChild(Object.assign(document.createElement('div'), { textContent: '🛑 Cerrando la aplicación...' }));
   await fetch('/api/quit-app', { method: 'POST' }).catch(() => {});
   // La app se cierra sola desde aquí en adelante; no hay nada más que hacer en pantalla.
+});
+
+document.getElementById('restartAppBtn').addEventListener('click', async () => {
+  if (!confirm('¿Reiniciar la app? Se va a cerrar y volver a abrir sola en unos segundos.')) return;
+  logDiv.appendChild(Object.assign(document.createElement('div'), { textContent: '🔄 Reiniciando la aplicación...' }));
+  await fetch('/api/restart-app', { method: 'POST' }).catch(() => {});
+  // La app se reinicia sola desde aquí en adelante.
 });
 
 fetch('/api/status').then((r) => r.json()).then((d) => setStatus(d.status));
@@ -493,7 +507,14 @@ document.getElementById('checkUpdateBtn').addEventListener('click', async () => 
         updateResultDiv.innerHTML = 'Instalando...';
         const res = await fetch('/api/apply-update', { method: 'POST' }).then((r) => r.json());
         if (res.ok) {
-          updateResultDiv.innerHTML = `<span style="color:#16a34a">✔ ${res.message}</span>`;
+          updateResultDiv.innerHTML = `
+            <span style="color:#16a34a">✔ ${res.message}</span>
+            <br><button id="restartAfterUpdateBtn" class="save-btn" style="margin-top:10px">🔄 Reiniciar ahora</button>
+          `;
+          document.getElementById('restartAfterUpdateBtn').addEventListener('click', async () => {
+            updateResultDiv.innerHTML = '🔄 Reiniciando...';
+            await fetch('/api/restart-app', { method: 'POST' }).catch(() => {});
+          });
         } else {
           updateResultDiv.innerHTML = `<span style="color:#dc2626">${res.error}</span>`;
         }
