@@ -1,5 +1,5 @@
 {
-  "version": "1.9.5",
+  "version": "1.10.0",
   "notes": "Botón para probar la voz clonada desde el panel (sin enviar nada a clientes).",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
