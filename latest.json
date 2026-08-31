@@ -1,10 +1,14 @@
 {
-  "version": "1.9.1",
-  "notes": "Arreglo: la API Key y Group ID de MiniMax ya se muestran al reabrir la app",
-  "files": {
-    "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
-    "main.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/main.js",
-    "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
-    "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
-  }
+"version": "1.9.2",
+"notes": "Corrección: FFmpeg para las respuestas de voz de MiniMax en el instalador de Windows.",
+"files": {
+"server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
+"main.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/main.js",
+"public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
+"public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
+},
+"newDependencies": [
+"fluent-ffmpeg@^2.1.2",
+"ffmpeg-static@^5.2.0"
+]
 }
