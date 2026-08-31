@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.15.5';
+const CURRENT_VERSION = '1.16.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -715,17 +715,61 @@ function normalizeWhatsAppNumber(rawNumber) {
   return digitsOnly ? `${digitsOnly}@s.whatsapp.net` : null;
 }
 
+// Busca el teléfono que el CLIENTE mismo escribió durante la compra (ya lo
+// pides como parte del pedido: "📱 Teléfono: ..."). Es la fuente más
+// confiable, porque no depende de cómo WhatsApp identifique internamente al
+// contacto (a veces usa un "@lid", un id interno que NO es el número real).
+function extractPhoneFromOrderText(text) {
+  const match = (text || '').match(/tel[eé]fono[:\s]*([\d\s\-+]{7,})/i);
+  if (!match) return null;
+  const digits = match[1].replace(/[^\d]/g, '');
+  return digits || null;
+}
+
+// Los clientes suelen escribir su celular sin el indicativo del país (ej.
+// "3001234567"). Para que el link wa.me funcione, hace falta el indicativo
+// completo — asumimos Colombia (57) para el patrón típico de celular local.
+function normalizeColombianNumber(digits) {
+  if (!digits) return null;
+  if (digits.length === 10 && digits.startsWith('3')) return `57${digits}`;
+  return digits;
+}
+
+// Intenta identificar el número real de WhatsApp del cliente, probando
+// varias fuentes en orden de confiabilidad. Esto NO es 100% infalible — es
+// un problema conocido y sin arreglo perfecto del lado de WhatsApp/Baileys
+// (algunos contactos se identifican con un "@lid" interno en vez de su
+// número real, y no siempre se puede traducir uno al otro).
+async function resolveClientPhoneNumber(clientUserId, replyText) {
+  const fromOrder = normalizeColombianNumber(extractPhoneFromOrderText(replyText));
+  if (fromOrder) return fromOrder;
+
+  if (clientUserId && clientUserId.endsWith('@s.whatsapp.net')) {
+    return clientUserId.split('@')[0];
+  }
+
+  if (clientUserId && clientUserId.endsWith('@lid') && sock?.signalRepository?.lidMapping?.getPNForLID) {
+    try {
+      const pn = await sock.signalRepository.lidMapping.getPNForLID(clientUserId);
+      if (pn) return pn.split('@')[0];
+    } catch (e) {
+      // no se pudo resolver, seguimos sin número
+    }
+  }
+
+  return null;
+}
+
 async function notifyOwner(cfg, clientUserId, headerLine, reply) {
   const ownerJid = normalizeWhatsAppNumber(cfg.notificationPhoneNumber);
   if (!ownerJid) return;
-  const clientNumber = (clientUserId || '').split('@')[0];
-  // wa.me abre el chat directo con ese número al hacerle clic, sin buscarlo a mano.
-  // Nota: si WhatsApp identifica a ese cliente con un "@lid" (un id interno,
-  // no su número real) en vez de "@s.whatsapp.net", este link puede no abrir
-  // el chat correcto — pasa poco, pero puede pasar con algunos contactos.
-  const chatLink = `https://wa.me/${clientNumber}`;
-  const notification =
-    `${headerLine}\n📱 Cliente: ${clientNumber}\n💬 Abrir chat: ${chatLink}\n\n${reply}`;
+
+  const phoneNumber = await resolveClientPhoneNumber(clientUserId, reply);
+  const chatLine = phoneNumber
+    ? `📱 Cliente: ${phoneNumber}\n💬 Abrir chat: https://wa.me/${phoneNumber}`
+    : `📱 Cliente: no se pudo identificar el número real (revisa el teléfono que dio en el pedido, si aplica).`;
+
+  const notification = `${headerLine}\n${chatLine}\n\n${reply}`;
   await sock.sendMessage(ownerJid, { text: notification });
 }
 
