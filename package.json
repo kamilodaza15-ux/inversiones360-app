@@ -1,7 +1,7 @@
 {
   "name": "inversiones360-chat",
   "productName": "Inversiones 360 CHAT",
-  "version": "1.15.5",
+  "version": "1.16.0",
   "description": "Asistente de ventas por WhatsApp con IA",
   "main": "main.js",
   "type": "commonjs",
