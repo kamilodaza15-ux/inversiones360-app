@@ -896,6 +896,44 @@ app.get('/api/check-update', async (req, res) => {
   }
 });
 
+// Busca un npm utilizable: primero el node-portable que viaja dentro de la
+// propia carpeta de la app (como en el instalador), si no existe, confía en
+// que "npm" esté disponible en el PATH del sistema.
+function resolveNpmCommand() {
+  const portableNpm = path.join(__dirname, 'node-portable', 'npm.cmd');
+  if (fs.existsSync(portableNpm)) return `"${portableNpm}"`;
+  return 'npm';
+}
+
+// Corre "npm install <paquetes>" dentro de la carpeta de la app, mostrando
+// el progreso en el log del panel en tiempo real.
+function installDependencies(packages) {
+  return new Promise((resolve, reject) => {
+    if (!packages || packages.length === 0) return resolve();
+    const { spawn } = require('child_process');
+    const npmCmd = resolveNpmCommand();
+    io.emit('log', `📦 Instalando dependencias nuevas: ${packages.join(', ')}...`);
+
+    const child = spawn(`${npmCmd} install ${packages.join(' ')}`, {
+      cwd: __dirname,
+      shell: true,
+    });
+
+    child.stdout.on('data', (data) => io.emit('log', data.toString().trim()));
+    child.stderr.on('data', (data) => io.emit('log', data.toString().trim()));
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        io.emit('log', '✔ Dependencias instaladas correctamente.');
+        resolve();
+      } else {
+        reject(new Error(`npm install terminó con código ${code}`));
+      }
+    });
+    child.on('error', reject);
+  });
+}
+
 app.post('/api/apply-update', async (req, res) => {
   try {
     const manifestResponse = await fetch(UPDATE_MANIFEST_URL, { cache: 'no-store' });
@@ -937,6 +975,12 @@ app.post('/api/apply-update', async (req, res) => {
       }
       fs.writeFileSync(targetPath, newContent, 'utf8');
       updatedFiles.push(safeRelPath);
+    }
+
+    // Si el manifiesto indica librerías nuevas que el código actualizado
+    // necesita, las instala automáticamente antes de terminar.
+    if (Array.isArray(manifest.newDependencies) && manifest.newDependencies.length > 0) {
+      await installDependencies(manifest.newDependencies);
     }
 
     res.json({
