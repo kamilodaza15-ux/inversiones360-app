@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.10.0';
+const CURRENT_VERSION = '1.12.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -234,6 +234,21 @@ function getMachineId() {
   return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
 }
 
+// Busca la IP de esta PC en la red local (WiFi/cable), para poder mostrar un
+// link + QR y así abrir el panel desde el celular u otro computador de la
+// misma red, sin tener que escribir la IP a mano.
+function getLocalNetworkIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return null;
+}
+
 function readLicense() {
   if (!fs.existsSync(LICENSE_PATH)) return { activated: false, key: '', machineId: '' };
   return JSON.parse(fs.readFileSync(LICENSE_PATH, 'utf8'));
@@ -348,6 +363,75 @@ app.post('/api/config', (req, res) => {
   const updated = { ...current, ...req.body };
   writeConfig(updated);
   res.json(updated);
+});
+
+// ---------- API: exportar / importar respaldo (productos + configuración) ----------
+// Útil para pasar tu catálogo y configuración de una PC a otra (ej. del
+// portátil al computador de mesa) sin tener que copiar carpetas a mano.
+// Incluye data/ (config, productos, claves válidas) y media/ (fotos/videos
+// de los productos). NO incluye license.json (queda atado a cada máquina) ni
+// session/ (la conexión de WhatsApp — mejor escanear el QR de nuevo en cada
+// equipo, para evitar líos con dos sesiones activas del mismo número).
+app.get('/api/backup/export', (req, res) => {
+  try {
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip();
+
+    fs.readdirSync(DATA_DIR).forEach((file) => {
+      if (file === 'license.json') return; // atado a esta máquina, no se exporta
+      zip.addLocalFile(path.join(DATA_DIR, file), 'data');
+    });
+
+    if (fs.existsSync(MEDIA_DIR)) {
+      zip.addLocalFolder(MEDIA_DIR, 'media');
+    }
+
+    const zipBuffer = zip.toBuffer();
+    const filename = `respaldo-inversiones360-${new Date().toISOString().slice(0, 10)}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(zipBuffer);
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo generar el respaldo: ' + err.message });
+  }
+});
+
+const uploadBackupZip = multer({
+  storage: multer.diskStorage({
+    destination: TMP_DIR,
+    filename: (req, file, cb) => cb(null, `backup-${Date.now()}.zip`),
+  }),
+  fileFilter: (req, file, cb) => {
+    if (!file.originalname.toLowerCase().endsWith('.zip')) {
+      return cb(new Error('El respaldo debe ser un archivo .zip'));
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB: alcanza de sobra para fotos/videos de productos
+}).single('backup');
+
+app.post('/api/backup/import', uploadBackupZip, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No llegó ningún archivo .zip' });
+  try {
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(req.file.path);
+
+    // Solo se permite reemplazar data/ y media/ — nunca nada fuera de la
+    // carpeta de la app, por seguridad.
+    zip.getEntries().forEach((entry) => {
+      const isData = entry.entryName.startsWith('data/');
+      const isMedia = entry.entryName.startsWith('media/');
+      if ((isData || isMedia) && !entry.entryName.includes('..')) {
+        zip.extractEntryTo(entry, __dirname, true, true);
+      }
+    });
+
+    res.json({ ok: true, message: 'Respaldo restaurado correctamente. Los productos y la configuración ya se actualizaron.' });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo restaurar el respaldo: ' + err.message });
+  } finally {
+    fs.unlink(req.file.path, () => {});
+  }
 });
 
 // ---------- API: productos ----------
@@ -1032,6 +1116,23 @@ app.post('/api/start', (req, res) => {
 });
 
 app.get('/api/status', (req, res) => res.json({ status: botStatus }));
+
+// ---------- API: acceder al panel desde otro dispositivo en la misma red ----------
+// No es una copia — es literalmente el mismo panel, la misma base de datos.
+// Cualquier cambio hecho desde otro dispositivo se guarda en esta misma PC.
+app.get('/api/network-info', async (req, res) => {
+  try {
+    const ip = getLocalNetworkIP();
+    if (!ip) {
+      return res.json({ available: false });
+    }
+    const url = `http://${ip}:${PORT}`;
+    const qrDataUrl = await QRCode.toDataURL(url);
+    res.json({ available: true, url, qrDataUrl });
+  } catch (err) {
+    res.status(500).json({ available: false, error: err.message });
+  }
+});
 
 // ---------- API: cerrar sesión de WhatsApp (desvincula el número, conserva la app abierta) ----------
 app.post('/api/logout', async (req, res) => {

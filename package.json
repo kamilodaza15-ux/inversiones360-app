@@ -1,7 +1,7 @@
 {
   "name": "inversiones360-chat",
   "productName": "Inversiones 360 CHAT",
-  "version": "1.10.0",
+  "version": "1.12.0",
   "description": "Asistente de ventas por WhatsApp con IA",
   "main": "main.js",
   "type": "commonjs",
@@ -22,7 +22,8 @@
     "openai": "^4.68.0",
     "electron": "^31.0.0",
     "fluent-ffmpeg": "^2.1.2",
-    "ffmpeg-static": "^5.2.0"
+    "ffmpeg-static": "^5.2.0",
+    "adm-zip": "^0.5.16"
   },
   "devDependencies": {
     "electron-builder": "^24.13.3"
