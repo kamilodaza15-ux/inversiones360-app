@@ -199,6 +199,8 @@ async function loadConfig() {
   // Compatibilidad: si alguien tenía la versión vieja con voiceEnabled (true/false),
   // lo traducimos automáticamente a voiceMode la primera vez que carga.
   document.getElementById('cfg-voiceMode').value = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
+  document.getElementById('cfg-minimaxApiKey').value = cfg.minimaxApiKey || '';
+  document.getElementById('cfg-minimaxGroupId').value = cfg.minimaxGroupId || '';
   updateVoiceCloneStatus(cfg);
   setupModelSelect('cfg-groqModel', 'cfg-groqModel-custom', cfg.groqModel);
   setupModelSelect('cfg-openaiModel', 'cfg-openaiModel-custom', cfg.openaiModel);
@@ -289,6 +291,53 @@ document.getElementById('cloneVoiceBtn').addEventListener('click', async () => {
   } catch (err) {
     statusEl.style.color = '#dc2626';
     statusEl.textContent = 'Error de conexión al clonar la voz.';
+  }
+});
+
+// ---------- Lista de voces clonadas (elegir cuál usar) ----------
+document.getElementById('listVoicesBtn').addEventListener('click', async () => {
+  const listDiv = document.getElementById('voiceList');
+  listDiv.innerHTML = 'Consultando tus voces en MiniMax...';
+  try {
+    const data = await fetch('/api/voice/list').then((r) => r.json());
+    if (data.error) {
+      listDiv.innerHTML = `<span style="color:#dc2626">${data.error}</span>`;
+      return;
+    }
+    if (!data.voices || data.voices.length === 0) {
+      listDiv.innerHTML = '<span class="hint small">Todavía no tienes voces activas. Recuerda: una voz clonada solo aparece aquí después de usarse al menos una vez para generar audio.</span>';
+      return;
+    }
+    listDiv.innerHTML = data.voices
+      .map((v) => {
+        const isCurrent = v.voice_id === data.currentVoiceId;
+        return `
+          <div class="product-item" style="padding:10px">
+            <div class="info">
+              <b>${v.voice_id}</b>
+              <div class="kw">Clonada el ${v.created_time || '?'}${isCurrent ? ' · <span style="color:#16a34a;font-weight:700">✔ en uso</span>' : ''}</div>
+            </div>
+            <div class="actions">
+              <button data-use-voice="${v.voice_id}" ${isCurrent ? 'disabled' : ''}>${isCurrent ? 'En uso' : 'Usar esta'}</button>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    listDiv.querySelectorAll('[data-use-voice]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await fetch('/api/voice/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ voiceId: btn.dataset.useVoice }),
+        });
+        document.getElementById('listVoicesBtn').click(); // refresca la lista
+        updateVoiceCloneStatus(await fetch('/api/config').then((r) => r.json()));
+      });
+    });
+  } catch (err) {
+    listDiv.innerHTML = `<span style="color:#dc2626">Error: ${err.message}</span>`;
   }
 });
 
