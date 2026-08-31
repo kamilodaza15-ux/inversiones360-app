@@ -1,11 +1,8 @@
 {
-  "version": "1.14.0",
-  "notes": "Botón para reiniciar la app sola (sin ir a la bandeja del sistema), incluido justo después de instalar una actualización.",
+  "version": "1.15.1",
+  "notes": "Aviso automático cuando un cliente cancela su pedido (no solo cuando compra), y las notificaciones ahora incluyen un link para abrir el chat del cliente directo.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
-    "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
-    "main.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/main.js",
-    "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
-    "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
+    "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json"
   }
 }
