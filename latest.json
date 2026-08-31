@@ -1,6 +1,6 @@
 {
-  "version": "1.15.3",
-  "notes": "El cierre de la app ahora se fuerza si no termina solo en unos segundos, para evitar procesos electron.exe sueltos que bloquean actualizaciones.",
+  "version": "1.15.4",
+  "notes": "Se quitó la detección automática del firewall (daba falsos positivos); ahora el comando queda siempre disponible como referencia, sin alarmar sin certeza.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
