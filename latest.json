@@ -1,6 +1,7 @@
 {
   "version": "1.8.0",
   "notes": "Selectores de modelo, video de producto, y todo unificado en un solo repositorio",
+  "newDependencies": ["fluent-ffmpeg", "ffmpeg-static"],
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "main.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/main.js",
