@@ -51,6 +51,14 @@
         <img id="qrImage" class="qr-img" style="display:none" />
         <div id="log" class="log"></div>
       </div>
+
+      <div class="card center" id="networkAccessCard" style="display:none">
+        <h2>📱 Abrir este panel desde tu celular u otra PC</h2>
+        <p class="hint small">Debe estar conectado a la <b>misma red WiFi</b> que esta PC. No es una copia — cualquier cambio que hagas ahí se guarda aquí mismo.</p>
+        <img id="networkQrImage" class="qr-img" style="display:none" />
+        <p class="hint" id="networkUrlText" style="user-select:all"></p>
+        <p class="hint small">Si no carga desde el otro dispositivo, puede que falte permitir el puerto en el Firewall de Windows. Pídele ayuda a quien te instaló la app.</p>
+      </div>
     </section>
 
     <section id="tab-config" class="tab-content">
@@ -152,6 +160,19 @@
 
         <button id="saveVoiceConfigBtn" class="save-btn" style="margin-top:14px">Guardar configuración de voz</button>
         <span id="voiceConfigSaved" class="saved-msg"></span>
+      </div>
+
+      <div class="card">
+        <h2>Respaldo (mover productos y configuración a otra PC)</h2>
+        <p class="hint small">Útil si usas la app en más de un equipo (ej. portátil y computador de mesa) sin tenerlos prendidos al mismo tiempo. No incluye la licencia (queda atada a cada máquina) ni la conexión de WhatsApp (escanea el QR de nuevo en cada equipo).</p>
+
+        <button id="exportBackupBtn" class="save-btn">📦 Exportar respaldo</button>
+        <p id="exportBackupStatus" class="hint small" style="margin-top:8px"></p>
+
+        <label style="margin-top:14px">Importar respaldo (.zip)</label>
+        <input id="import-backup-file" type="file" accept=".zip" />
+        <button id="importBackupBtn" class="cancel-btn" style="margin-top:8px">📥 Importar respaldo</button>
+        <p id="importBackupStatus" class="hint small" style="margin-top:8px"></p>
       </div>
 
       <div class="card">

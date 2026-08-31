@@ -149,6 +149,19 @@ document.getElementById('quitAppBtn').addEventListener('click', async () => {
 
 fetch('/api/status').then((r) => r.json()).then((d) => setStatus(d.status));
 
+// ---------- Acceso desde otro dispositivo en la misma red ----------
+fetch('/api/network-info')
+  .then((r) => r.json())
+  .then((data) => {
+    if (!data.available) return;
+    document.getElementById('networkAccessCard').style.display = 'block';
+    document.getElementById('networkUrlText').textContent = data.url;
+    const qrImg = document.getElementById('networkQrImage');
+    qrImg.src = data.qrDataUrl;
+    qrImg.style.display = 'block';
+  })
+  .catch(() => {}); // si falla, simplemente no se muestra la tarjeta — no afecta el resto de la app
+
 // ---------- Configuración ----------
 const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
@@ -381,6 +394,58 @@ document.getElementById('previewVoiceBtn').addEventListener('click', async () =>
     statusEl.textContent = 'Error de conexión al generar el audio.';
   } finally {
     btn.disabled = false;
+  }
+});
+
+// ---------- Respaldo (exportar / importar productos y configuración) ----------
+document.getElementById('exportBackupBtn').addEventListener('click', () => {
+  const statusEl = document.getElementById('exportBackupStatus');
+  statusEl.style.color = '';
+  statusEl.textContent = 'Descargando...';
+  // Se abre como descarga directa del navegador — no hace falta fetch/JS extra.
+  window.location.href = '/api/backup/export';
+  setTimeout(() => {
+    statusEl.style.color = '#16a34a';
+    statusEl.textContent = '✔ Descarga iniciada. Revisa tu carpeta de Descargas.';
+  }, 800);
+});
+
+document.getElementById('importBackupBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('import-backup-file');
+  const statusEl = document.getElementById('importBackupStatus');
+  const file = fileInput.files[0];
+  if (!file) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Primero elige el archivo .zip del respaldo.';
+    return;
+  }
+  if (
+    !confirm(
+      'Esto va a reemplazar tus productos y configuración actuales con los del respaldo. ¿Continuar?'
+    )
+  )
+    return;
+
+  statusEl.style.color = '';
+  statusEl.textContent = 'Restaurando respaldo...';
+
+  const formData = new FormData();
+  formData.append('backup', file);
+  try {
+    const res = await fetch('/api/backup/import', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.ok) {
+      statusEl.style.color = '#16a34a';
+      statusEl.textContent = `✔ ${data.message}`;
+      loadConfig();
+      loadProducts();
+    } else {
+      statusEl.style.color = '#dc2626';
+      statusEl.textContent = data.error || 'No se pudo restaurar el respaldo.';
+    }
+  } catch (err) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Error de conexión al restaurar el respaldo.';
   }
 });
 
