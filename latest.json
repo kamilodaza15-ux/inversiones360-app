@@ -1,8 +1,7 @@
 {
   "version": "1.9.2",
-  "notes": "Corrección de audio MiniMax: se incorpora FFmpeg para las instalaciones existentes.",
+  "notes": "Corrección de audio MiniMax: FFmpeg se detecta correctamente en la instalación.",
   "files": {
-    "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
-    "ffmpeg.exe": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/ffmpeg.exe"
+    "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js"
   }
 }
