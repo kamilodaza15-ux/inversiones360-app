@@ -13,7 +13,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.8.0';
+const CURRENT_VERSION = '1.7.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -379,6 +379,22 @@ async function minimaxCloneVoice(cfg, fileId, voiceId) {
     throw new Error(data?.base_resp?.status_msg || 'MiniMax no pudo clonar la voz');
   }
   return true;
+}
+
+async function minimaxListVoices(cfg) {
+  const res = await fetch(`${MINIMAX_BASE_URL}/get_voice?GroupId=${cfg.minimaxGroupId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cfg.minimaxApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ voice_type: 'voice_cloning' }),
+  });
+  const data = await res.json();
+  if (data?.base_resp?.status_code !== 0) {
+    throw new Error(data?.base_resp?.status_msg || 'MiniMax no pudo listar las voces');
+  }
+  return data.voice_cloning || [];
 }
 
 async function minimaxTextToSpeech(cfg, text) {
@@ -877,6 +893,27 @@ app.post('/api/voice/clone', uploadVoiceSample, async (req, res) => {
   } finally {
     if (req.file) fs.unlink(req.file.path, () => {});
   }
+});
+
+app.get('/api/voice/list', async (req, res) => {
+  try {
+    const cfg = readConfig();
+    if (!cfg.minimaxApiKey || !cfg.minimaxGroupId) {
+      return res.status(400).json({ error: 'Falta configurar la API Key y/o el Group ID de MiniMax' });
+    }
+    const voices = await minimaxListVoices(cfg);
+    res.json({ voices, currentVoiceId: cfg.minimaxVoiceId || '' });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudieron listar las voces: ' + err.message });
+  }
+});
+
+app.post('/api/voice/select', (req, res) => {
+  const { voiceId } = req.body;
+  if (!voiceId) return res.status(400).json({ error: 'Falta el voiceId' });
+  const cfg = readConfig();
+  writeConfig({ ...cfg, minimaxVoiceId: voiceId });
+  res.json({ ok: true });
 });
 
 // ---------- API: revisar y aplicar actualizaciones ----------
