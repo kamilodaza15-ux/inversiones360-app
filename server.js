@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.14.0';
+const CURRENT_VERSION = '1.15.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -735,15 +735,26 @@ function normalizeWhatsAppNumber(rawNumber) {
   return digitsOnly ? `${digitsOnly}@s.whatsapp.net` : null;
 }
 
-async function notifyOwnerOfSale(cfg, clientUserId, reply) {
+async function notifyOwner(cfg, clientUserId, headerLine, reply) {
   const ownerJid = normalizeWhatsAppNumber(cfg.notificationPhoneNumber);
   if (!ownerJid) return;
   const clientNumber = (clientUserId || '').split('@')[0];
+  // wa.me abre el chat directo con ese número al hacerle clic, sin buscarlo a mano.
+  // Nota: si WhatsApp identifica a ese cliente con un "@lid" (un id interno,
+  // no su número real) en vez de "@s.whatsapp.net", este link puede no abrir
+  // el chat correcto — pasa poco, pero puede pasar con algunos contactos.
+  const chatLink = `https://wa.me/${clientNumber}`;
   const notification =
-    `🛎️ *Nueva venta registrada*\n` +
-    `📱 Cliente: ${clientNumber}\n\n` +
-    `${reply}`;
+    `${headerLine}\n📱 Cliente: ${clientNumber}\n💬 Abrir chat: ${chatLink}\n\n${reply}`;
   await sock.sendMessage(ownerJid, { text: notification });
+}
+
+async function notifyOwnerOfSale(cfg, clientUserId, reply) {
+  await notifyOwner(cfg, clientUserId, '🛎️ *Nueva venta registrada*', reply);
+}
+
+async function notifyOwnerOfCancellation(cfg, clientUserId, reply) {
+  await notifyOwner(cfg, clientUserId, '❌ *Pedido cancelado*', reply);
 }
 
 // ---------- IA: llamada según proveedor configurado (con soporte de tools) ----------
@@ -853,6 +864,12 @@ Si pregunta en general, puedes mencionar brevemente los productos disponibles y 
 Cuando el cliente pida ver fotos, imágenes o cómo se ve el producto, usa la función enviar_imagen_producto para enviarlas de verdad.
 Cuando el cliente pida ver un video, una demostración o cómo funciona, usa la función enviar_video_producto — pero solo si el catálogo dice que ese producto SÍ tiene video disponible; si no lo tiene, dilo con naturalidad en vez de llamar la función.
 Nunca digas frases como "ya te la envío" o "aquí tienes la foto/video" si no llamaste a la función correspondiente — el cliente no recibirá nada si solo lo dices en texto.
+
+REGLA DE CANCELACIÓN — MUY IMPORTANTE:
+Si el cliente dice que YA NO QUIERE el producto, se arrepintió de la compra, quiere anular o cancelar su PEDIDO — responde con empatía, sin insistir ni presionar, y SIEMPRE incluye en tu respuesta, exactamente así, la frase:
+❌ PEDIDO CANCELADO ❌
+Después de esa frase, agrega un resumen breve (producto del que se trataba, y el motivo si el cliente lo mencionó).
+Esta frase es SOLO para cuando el cliente cancela el pedido completo (ya no lo quiere). NUNCA la uses si el cliente solo está cambiando la forma de pago, preguntando por el precio, o teniendo dudas normales — eso NO es una cancelación.
 `;
 }
 
@@ -1119,6 +1136,17 @@ async function startBot() {
         } catch (err) {
           console.error('Error notificando la venta:', err);
           io.emit('log', `⚠️ No se pudo notificar la venta: ${err.message}`);
+        }
+      }
+
+      // ---- Si el cliente canceló el pedido, avisar también ----
+      if (reply.includes('PEDIDO CANCELADO') && cfg.notificationPhoneNumber) {
+        try {
+          await notifyOwnerOfCancellation(cfg, userId, reply);
+          io.emit('log', `❌ Cancelación notificada a ${cfg.notificationPhoneNumber}`);
+        } catch (err) {
+          console.error('Error notificando la cancelación:', err);
+          io.emit('log', `⚠️ No se pudo notificar la cancelación: ${err.message}`);
         }
       }
 
