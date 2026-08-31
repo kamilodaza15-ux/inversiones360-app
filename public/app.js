@@ -159,6 +159,29 @@ fetch('/api/network-info')
     const qrImg = document.getElementById('networkQrImage');
     qrImg.src = data.qrDataUrl;
     qrImg.style.display = 'block';
+
+    // Solo mostramos el aviso de firewall si de verdad pudimos revisarlo Y
+    // detectamos que falta el permiso — si no se pudo revisar (firewallStatus
+    // es null), no decimos nada para no alarmar sin certeza.
+    if (data.firewallStatus && data.firewallStatus.firewallAllows === false) {
+      const warningDiv = document.getElementById('firewallWarning');
+      const cmdEl = document.getElementById('firewallCommand');
+      const command = `New-NetFirewallRule -DisplayName "Inversiones360 Panel" -Direction Inbound -Protocol TCP -LocalPort ${data.port} -Action Allow`;
+      cmdEl.textContent = command;
+      warningDiv.style.display = 'block';
+
+      if (data.firewallStatus.networkCategories && data.firewallStatus.networkCategories.includes('Public')) {
+        document.getElementById('publicNetworkWarning').style.display = 'block';
+      }
+
+      document.getElementById('copyFirewallCmdBtn').addEventListener('click', () => {
+        navigator.clipboard.writeText(command).then(() => {
+          const btn = document.getElementById('copyFirewallCmdBtn');
+          btn.textContent = '✔ Copiado';
+          setTimeout(() => (btn.textContent = '📋 Copiar comando'), 2000);
+        });
+      });
+    }
   })
   .catch(() => {}); // si falla, simplemente no se muestra la tarjeta — no afecta el resto de la app
 

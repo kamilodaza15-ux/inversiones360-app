@@ -57,7 +57,13 @@
         <p class="hint small">Debe estar conectado a la <b>misma red WiFi</b> que esta PC. No es una copia — cualquier cambio que hagas ahí se guarda aquí mismo.</p>
         <img id="networkQrImage" class="qr-img" style="display:none" />
         <p class="hint" id="networkUrlText" style="user-select:all"></p>
-        <p class="hint small">Si no carga desde el otro dispositivo, puede que falte permitir el puerto en el Firewall de Windows. Pídele ayuda a quien te instaló la app.</p>
+        <div id="firewallWarning" style="display:none;text-align:left;margin-top:10px;padding:12px;background:#fef9c3;border:1px solid #eab308;border-radius:8px">
+          <p class="hint small" style="color:#854d0e;font-weight:600">⚠️ El Firewall de Windows puede estar bloqueando el acceso desde otros dispositivos.</p>
+          <p class="hint small">Corre esto UNA sola vez: abre PowerShell <b>como administrador</b>, pega este comando y presiona Enter:</p>
+          <code id="firewallCommand" style="display:block;background:#fff;padding:8px;border-radius:6px;margin:8px 0;word-break:break-all;user-select:all"></code>
+          <button id="copyFirewallCmdBtn" class="cancel-btn">📋 Copiar comando</button>
+          <p id="publicNetworkWarning" class="hint small" style="display:none;margin-top:8px">También parece que esta red está marcada como "Pública" en Windows — cambiarla a "Privada" (Configuración → Red e Internet) puede ayudar.</p>
+        </div>
       </div>
     </section>
 
