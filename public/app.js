@@ -341,6 +341,49 @@ document.getElementById('listVoicesBtn').addEventListener('click', async () => {
   }
 });
 
+// ---------- Probar la voz clonada (solo se escucha aquí, no se envía a nadie) ----------
+document.getElementById('previewVoiceBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('previewVoiceBtn');
+  const statusEl = document.getElementById('voicePreviewStatus');
+  const audioEl = document.getElementById('voicePreviewAudio');
+  const text = document.getElementById('voice-preview-text').value.trim();
+
+  if (!text) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Escribe algo para probar (o deja el mensaje sugerido).';
+    return;
+  }
+
+  btn.disabled = true;
+  statusEl.style.color = '';
+  statusEl.textContent = 'Generando audio de prueba...';
+  audioEl.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/voice/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      statusEl.style.color = '#16a34a';
+      statusEl.textContent = '✔ Listo, dale play abajo.';
+      audioEl.src = `data:audio/mp3;base64,${data.audioBase64}`;
+      audioEl.style.display = 'block';
+      audioEl.play().catch(() => {}); // si el navegador bloquea autoplay, igual queda listo para darle play a mano
+    } else {
+      statusEl.style.color = '#dc2626';
+      statusEl.textContent = data.error || 'No se pudo generar el audio.';
+    }
+  } catch (err) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Error de conexión al generar el audio.';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ---------- Actualizaciones ----------
 const updateResultDiv = document.getElementById('updateResult');
 const currentVersionLabel = document.getElementById('currentVersionLabel');

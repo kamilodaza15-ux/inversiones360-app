@@ -137,6 +137,12 @@
         <button id="listVoicesBtn" class="cancel-btn" style="margin-top:8px">🎧 Ver mis voces clonadas</button>
         <div id="voiceList" style="margin-top:10px"></div>
 
+        <label style="margin-top:14px">Probar la voz seleccionada (solo la escuchas aquí, no se envía a ningún cliente)</label>
+        <textarea id="voice-preview-text" rows="2">Bienvenido a Inversiones 360, soy la asistente virtual. ¿En qué te puedo ayudar hoy?</textarea>
+        <button id="previewVoiceBtn" class="cancel-btn" style="margin-top:8px">▶ Probar voz</button>
+        <p id="voicePreviewStatus" class="hint small" style="margin-top:8px"></p>
+        <audio id="voicePreviewAudio" controls style="display:none;margin-top:8px;width:100%"></audio>
+
         <label style="margin-top:14px">¿Cómo debe responder el bot a los clientes?</label>
         <select id="cfg-voiceMode">
           <option value="off">🔇 Apagado — siempre responde en texto</option>
