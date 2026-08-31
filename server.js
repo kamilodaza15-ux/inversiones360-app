@@ -13,7 +13,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.9.4';
+const CURRENT_VERSION = '1.9.5';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1063,6 +1063,23 @@ app.post('/api/voice/select', (req, res) => {
   const cfg = readConfig();
   writeConfig({ ...cfg, minimaxVoiceId: voiceId });
   res.json({ ok: true });
+});
+
+// ---------- API: probar la voz clonada (solo la escuchas en el panel, no se manda a ningún cliente) ----------
+app.post('/api/voice/preview', async (req, res) => {
+  try {
+    const cfg = readConfig();
+    if (!cfg.minimaxApiKey || !cfg.minimaxGroupId || !cfg.minimaxVoiceId) {
+      return res.status(400).json({ error: 'Falta configurar MiniMax o clonar/seleccionar una voz primero' });
+    }
+    const text = (req.body.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'Escribe un texto para probar' });
+
+    const audioBuffer = await minimaxTextToSpeech(cfg, text);
+    res.json({ ok: true, audioBase64: audioBuffer.toString('base64') });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo generar el audio de prueba: ' + err.message });
+  }
 });
 
 // ---------- API: revisar y aplicar actualizaciones ----------
