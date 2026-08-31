@@ -1,6 +1,6 @@
 {
-  "version": "1.15.2",
-  "notes": "Sincroniza main.js, index.html, app.js y style.css completos (por si tu instalación se había quedado atrás en alguno de esos).",
+  "version": "1.15.3",
+  "notes": "El cierre de la app ahora se fuerza si no termina solo en unos segundos, para evitar procesos electron.exe sueltos que bloquean actualizaciones.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
