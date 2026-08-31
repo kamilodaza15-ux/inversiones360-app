@@ -13,7 +13,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.9.3';
+const CURRENT_VERSION = '1.7.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -37,161 +37,6 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
 const crypto = require('crypto');
 const os = require('os');
-const ffmpeg = require('fluent-ffmpeg');
-
-// ---------- FFmpeg ----------
-// MiniMax devuelve el audio en MP3, pero WhatsApp necesita OGG/Opus para
-// enviarlo como nota de voz.
-//
-// IMPORTANTE:
-// En una instalación empaquetada con Electron, ffmpeg-static puede devolver
-// una ruta dentro de app.asar. Windows NO puede ejecutar directamente un
-// .exe desde dentro de app.asar, aunque fs.existsSync() diga que existe.
-//
-// Por eso, si la ruta de ffmpeg-static está dentro de app.asar, copiamos
-// automáticamente ffmpeg.exe a una carpeta real y escribible de Windows y
-// usamos esa copia para fluent-ffmpeg. Esto permite reparar instalaciones
-// existentes mediante una actualización de server.js, sin pedir al cliente
-// que reinstale ni que ejecute comandos.
-function resolveFfmpegPath() {
-  const candidates = [];
-
-  let staticPath = null;
-
-  try {
-    staticPath = require('ffmpeg-static');
-
-    if (staticPath) {
-      // Si Electron empaquetó ffmpeg dentro de app.asar, NO devolver esa ruta
-      // para ejecución. La trataremos más abajo copiándola fuera del asar.
-      if (!/app\.asar([\\/]|$)/i.test(staticPath)) {
-        candidates.push(staticPath);
-      }
-    }
-  } catch (err) {
-    console.warn('No se pudo cargar ffmpeg-static:', err.message);
-  }
-
-  // Rutas de respaldo para instalaciones no empaquetadas.
-  candidates.push(
-    path.join(__dirname, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe'),
-    path.join(
-      __dirname,
-      'node_modules',
-      'ffmpeg-static',
-      'bin',
-      'win32',
-      'x64',
-      'ffmpeg.exe'
-    )
-  );
-
-  // Rutas típicas de Electron Builder cuando ffmpeg-static está desempaquetado.
-  if (process.resourcesPath) {
-    candidates.push(
-      path.join(
-        process.resourcesPath,
-        'app.asar.unpacked',
-        'node_modules',
-        'ffmpeg-static',
-        'ffmpeg.exe'
-      ),
-      path.join(
-        process.resourcesPath,
-        'app.asar.unpacked',
-        'node_modules',
-        'ffmpeg-static',
-        'bin',
-        'win32',
-        'x64',
-        'ffmpeg.exe'
-      )
-    );
-  }
-
-  // FFmpeg colocado manualmente junto al programa.
-  candidates.push(
-    path.join(__dirname, 'ffmpeg.exe'),
-    path.join(__dirname, 'bin', 'ffmpeg.exe')
-  );
-
-  // Primero usamos una ruta que exista y que NO esté dentro de app.asar.
-  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
-    if (
-      fs.existsSync(candidate) &&
-      !/app\.asar([\\/]|$)/i.test(candidate)
-    ) {
-      console.log('✅ FFmpeg encontrado:', candidate);
-      return candidate;
-    }
-  }
-
-  // Si ffmpeg-static está dentro de app.asar, lo copiamos fuera del asar.
-  // LOCALAPPDATA es escribible por el usuario y no requiere permisos de
-  // administrador. Se usa una carpeta propia de la aplicación.
-  if (
-    staticPath &&
-    /app\.asar([\\/]|$)/i.test(staticPath) &&
-    fs.existsSync(staticPath)
-  ) {
-    const localAppData =
-      process.env.LOCALAPPDATA ||
-      process.env.APPDATA ||
-      path.join(os.homedir(), 'AppData', 'Local');
-
-    const runtimeDir = path.join(
-      localAppData,
-      'Inversiones360Chat',
-      'ffmpeg-runtime'
-    );
-    const runtimePath = path.join(runtimeDir, 'ffmpeg.exe');
-
-    try {
-      fs.mkdirSync(runtimeDir, { recursive: true });
-
-      // Copiamos la versión incluida en la aplicación a una ubicación real.
-      // Si ya existe, la reemplazamos para asegurarnos de usar la versión
-      // correspondiente a la aplicación actualizada.
-      fs.copyFileSync(staticPath, runtimePath);
-
-      if (fs.existsSync(runtimePath)) {
-        console.log('✅ FFmpeg extraído fuera de app.asar:', runtimePath);
-        return runtimePath;
-      }
-    } catch (err) {
-      console.warn(
-        '⚠️ No se pudo extraer FFmpeg fuera de app.asar:',
-        err.message
-      );
-    }
-  }
-
-  throw new Error(
-    'FFmpeg no encontrado o no se pudo extraer para su ejecución. ' +
-    'Ruta detectada por ffmpeg-static: ' +
-    (staticPath || 'ninguna')
-  );
-}
-
-const resolvedFfmpegPath = resolveFfmpegPath();
-console.log('🎙️ FFmpeg que usará fluent-ffmpeg:', resolvedFfmpegPath);
-ffmpeg.setFfmpegPath(resolvedFfmpegPath);
-
-
-// Convierte un mp3 (lo que devuelve MiniMax) a ogg/opus (lo que exige
-// WhatsApp para que una nota de voz se pueda reproducir del otro lado).
-function convertMp3ToOggOpus(inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .audioCodec('libopus')
-      .audioBitrate('64k')
-      .audioChannels(1)
-      .format('ogg')
-      .on('error', reject)
-      .on('end', resolve)
-      .save(outputPath);
-  });
-}
 
 function getMachineId() {
   const raw = `${os.hostname()}-${os.userInfo().username}-${os.platform()}-${os.arch()}`;
@@ -518,22 +363,6 @@ async function minimaxCloneVoice(cfg, fileId, voiceId) {
   return true;
 }
 
-async function minimaxListVoices(cfg) {
-  const res = await fetch(`${MINIMAX_BASE_URL}/get_voice?GroupId=${cfg.minimaxGroupId}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${cfg.minimaxApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ voice_type: 'voice_cloning' }),
-  });
-  const data = await res.json();
-  if (data?.base_resp?.status_code !== 0) {
-    throw new Error(data?.base_resp?.status_msg || 'MiniMax no pudo listar las voces');
-  }
-  return data.voice_cloning || [];
-}
-
 async function minimaxTextToSpeech(cfg, text) {
   const res = await fetch(`${MINIMAX_BASE_URL}/t2a_v2?GroupId=${cfg.minimaxGroupId}`, {
     method: 'POST',
@@ -560,20 +389,15 @@ async function minimaxTextToSpeech(cfg, text) {
 async function sendVoiceReply(userId, text) {
   const cfg = readConfig();
   const audioBuffer = await minimaxTextToSpeech(cfg, text);
-  const mp3Path = path.join(TMP_DIR, `voice-reply-${Date.now()}.mp3`);
-  const oggPath = mp3Path.replace(/\.mp3$/, '.ogg');
-  fs.writeFileSync(mp3Path, audioBuffer);
+  const tmpPath = path.join(TMP_DIR, `voice-reply-${Date.now()}.mp3`);
+  fs.writeFileSync(tmpPath, audioBuffer);
   try {
-    // WhatsApp exige que las notas de voz vengan en OGG/Opus. MiniMax nos da
-    // MP3, así que hay que convertirlo antes — si no, WhatsApp recibe el
-    // archivo pero no lo puede reproducir ("no se pudo descargar el audio").
-    await convertMp3ToOggOpus(mp3Path, oggPath);
-    const oggBuffer = fs.readFileSync(oggPath);
-    const media = new MessageMedia('audio/ogg; codecs=opus', oggBuffer.toString('base64'), 'voice.ogg');
+    const media = MessageMedia.fromFilePath(tmpPath);
+    // sendAudioAsVoice: true hace que llegue como nota de voz (con el ícono
+    // de micrófono), no como un archivo de audio adjunto normal.
     await client.sendMessage(userId, media, { sendAudioAsVoice: true });
   } finally {
-    fs.unlink(mp3Path, () => {});
-    fs.unlink(oggPath, () => {});
+    fs.unlink(tmpPath, () => {});
   }
 }
 
@@ -810,8 +634,7 @@ function startBot() {
 
       // ---- Notas de voz: transcribir antes de seguir el flujo normal ----
       let messageText = msg.body;
-      const isVoiceMessage = msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio');
-      if (isVoiceMessage) {
+      if (msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio')) {
         try {
           const media = await msg.downloadMedia();
           io.emit('log', `🎙️ Transcribiendo audio de ${userId}...`);
@@ -901,16 +724,9 @@ function startBot() {
       history.push({ role: 'assistant', content: reply });
       saveConversations();
 
-      // ---- Responder con audio (voz clonada) según el modo configurado ----
-      // voiceMode: 'off' (siempre texto), 'voice' (siempre audio),
-      // 'mirror' (responde en el mismo formato en que llegó el mensaje).
-      const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
-      const minimaxReady = cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
-      const shouldReplyWithVoice =
-        minimaxReady &&
-        (voiceMode === 'voice' || (voiceMode === 'mirror' && isVoiceMessage));
-
-      if (shouldReplyWithVoice) {
+      // ---- Responder con audio (voz clonada) si está activado, si no, texto normal ----
+      const voiceReady = cfg.voiceEnabled && cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
+      if (voiceReady) {
         try {
           await sendVoiceReply(userId, reply);
         } catch (err) {
@@ -1032,27 +848,6 @@ app.post('/api/voice/clone', uploadVoiceSample, async (req, res) => {
   }
 });
 
-app.get('/api/voice/list', async (req, res) => {
-  try {
-    const cfg = readConfig();
-    if (!cfg.minimaxApiKey || !cfg.minimaxGroupId) {
-      return res.status(400).json({ error: 'Falta configurar la API Key y/o el Group ID de MiniMax' });
-    }
-    const voices = await minimaxListVoices(cfg);
-    res.json({ voices, currentVoiceId: cfg.minimaxVoiceId || '' });
-  } catch (err) {
-    res.status(500).json({ error: 'No se pudieron listar las voces: ' + err.message });
-  }
-});
-
-app.post('/api/voice/select', (req, res) => {
-  const { voiceId } = req.body;
-  if (!voiceId) return res.status(400).json({ error: 'Falta el voiceId' });
-  const cfg = readConfig();
-  writeConfig({ ...cfg, minimaxVoiceId: voiceId });
-  res.json({ ok: true });
-});
-
 // ---------- API: revisar y aplicar actualizaciones ----------
 app.get('/api/check-update', async (req, res) => {
   try {
@@ -1069,44 +864,6 @@ app.get('/api/check-update', async (req, res) => {
     res.status(500).json({ error: 'No se pudo revisar actualizaciones: ' + err.message });
   }
 });
-
-// Busca un npm utilizable: primero el node-portable que viaja dentro de la
-// propia carpeta de la app (como en el instalador), si no existe, confía en
-// que "npm" esté disponible en el PATH del sistema.
-function resolveNpmCommand() {
-  const portableNpm = path.join(__dirname, 'node-portable', 'npm.cmd');
-  if (fs.existsSync(portableNpm)) return `"${portableNpm}"`;
-  return 'npm';
-}
-
-// Corre "npm install <paquetes>" dentro de la carpeta de la app, mostrando
-// el progreso en el log del panel en tiempo real.
-function installDependencies(packages) {
-  return new Promise((resolve, reject) => {
-    if (!packages || packages.length === 0) return resolve();
-    const { spawn } = require('child_process');
-    const npmCmd = resolveNpmCommand();
-    io.emit('log', `📦 Instalando dependencias nuevas: ${packages.join(', ')}...`);
-
-    const child = spawn(`${npmCmd} install ${packages.join(' ')}`, {
-      cwd: __dirname,
-      shell: true,
-    });
-
-    child.stdout.on('data', (data) => io.emit('log', data.toString().trim()));
-    child.stderr.on('data', (data) => io.emit('log', data.toString().trim()));
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        io.emit('log', '✔ Dependencias instaladas correctamente.');
-        resolve();
-      } else {
-        reject(new Error(`npm install terminó con código ${code}`));
-      }
-    });
-    child.on('error', reject);
-  });
-}
 
 app.post('/api/apply-update', async (req, res) => {
   try {
@@ -1149,12 +906,6 @@ app.post('/api/apply-update', async (req, res) => {
       }
       fs.writeFileSync(targetPath, newContent, 'utf8');
       updatedFiles.push(safeRelPath);
-    }
-
-    // Si el manifiesto indica librerías nuevas que el código actualizado
-    // necesita, las instala automáticamente antes de terminar.
-    if (Array.isArray(manifest.newDependencies) && manifest.newDependencies.length > 0) {
-      await installDependencies(manifest.newDependencies);
     }
 
     res.json({
