@@ -10,6 +10,14 @@ global.quitApp = function () {
   app.quit();
 };
 
+// Igual que quitApp, pero además vuelve a abrir la app sola (útil después de
+// instalar una actualización, para no tener que cerrar y abrir a mano).
+global.restartApp = function () {
+  app.relaunch();
+  app.isQuitting = true;
+  app.exit(0);
+};
+
 // Esto arranca tu servidor Express/whatsapp-web.js exactamente igual que
 // antes (server.js no cambia en nada). Solo lo hacemos correr DENTRO del
 // mismo proceso de Electron en vez de necesitar "npm start" aparte.

@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.13.0';
+const CURRENT_VERSION = '1.14.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1209,6 +1209,32 @@ app.post('/api/quit-app', async (req, res) => {
   }
   setTimeout(() => {
     if (typeof global.quitApp === 'function') {
+      global.quitApp();
+    } else {
+      process.exit(0);
+    }
+  }, 500);
+});
+
+// ---------- API: reiniciar la app (cierra y vuelve a abrir sola) ----------
+// Útil sobre todo después de instalar una actualización, para no tener que
+// cerrar y abrir a mano. Si corre fuera de Electron (ej. "npm start" directo),
+// no hay forma de "reabrirse sola" — en ese caso solo se cierra, como
+// /api/quit-app, y hay que volver a abrirla a mano.
+app.post('/api/restart-app', async (req, res) => {
+  res.json({ ok: true });
+  io.emit('log', '🔄 Reiniciando la aplicación...');
+  try {
+    if (sock) {
+      sock.end(undefined);
+    }
+  } catch (e) {
+    console.error('Error cerrando la conexión antes de reiniciar:', e);
+  }
+  setTimeout(() => {
+    if (typeof global.restartApp === 'function') {
+      global.restartApp();
+    } else if (typeof global.quitApp === 'function') {
       global.quitApp();
     } else {
       process.exit(0);
