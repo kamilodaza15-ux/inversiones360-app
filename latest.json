@@ -1,9 +1,10 @@
 {
-  "version": "1.13.0",
-  "notes": "Detecta si el Firewall de Windows bloquea el acceso desde otros dispositivos y muestra el comando listo para arreglarlo.",
+  "version": "1.14.0",
+  "notes": "Botón para reiniciar la app sola (sin ir a la bandeja del sistema), incluido justo después de instalar una actualización.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
+    "main.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/main.js",
     "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
     "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
   }
