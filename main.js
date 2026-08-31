@@ -8,6 +8,13 @@ const http = require('http');
 global.quitApp = function () {
   app.isQuitting = true;
   app.quit();
+  // Red de seguridad: si algo dentro de Electron se queda "colgado" cerrando
+  // (por ejemplo, esperando a que termine la conexión de WhatsApp) y no
+  // alcanza a cerrar solo, esto lo fuerza a los pocos segundos — para no
+  // dejar procesos electron.exe sueltos que después bloqueen actualizaciones.
+  setTimeout(() => {
+    app.exit(0);
+  }, 5000);
 };
 
 // Igual que quitApp, pero además vuelve a abrir la app sola (útil después de
@@ -79,8 +86,7 @@ function createTray() {
     {
       label: 'Salir',
       click: () => {
-        app.isQuitting = true;
-        app.quit();
+        global.quitApp();
       },
     },
   ]);
