@@ -1,9 +1,9 @@
 {
   "version": "1.10.0",
-  "notes": "Botón para probar la voz clonada desde el panel (sin enviar nada a clientes).",
+  "notes": "Migración a Baileys: arregla la transcripción de audios entrantes, instalación más liviana (sin Chromium).",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
-    "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
-    "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js"
-  }
+    "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json"
+  },
+  "newDependencies": ["@whiskeysockets/baileys", "@hapi/boom"]
 }
