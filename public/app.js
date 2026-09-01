@@ -85,14 +85,33 @@ async function checkUpdateBannerOnLoad() {
 }
 checkUpdateBannerOnLoad();
 
-// ---------- Tabs ----------
-document.querySelectorAll('.tab-btn').forEach((btn) => {
+// ---------- Tabs (ahora en la barra lateral) ----------
+document.querySelectorAll('.nav-item').forEach((btn) => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
   });
+});
+
+// ---------- Barra lateral: fijar/ocultar con el botón ☰ ----------
+const sidebarEl = document.getElementById('sidebar');
+document.getElementById('sidebarToggleBtn').addEventListener('click', () => {
+  sidebarEl.classList.toggle('pinned');
+});
+
+// ---------- Modo oscuro / claro ----------
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
+  document.getElementById('themeLabel').textContent = theme === 'dark' ? 'Modo claro' : 'Modo oscuro';
+  localStorage.setItem('inversiones360-theme', theme);
+}
+applyTheme(localStorage.getItem('inversiones360-theme') || 'light');
+document.getElementById('themeToggleBtn').addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  applyTheme(current === 'dark' ? 'light' : 'dark');
 });
 
 // ---------- Estado / QR ----------
@@ -424,12 +443,17 @@ document.getElementById('previewVoiceBtn').addEventListener('click', async () =>
   }
 });
 
-// ---------- Clientes (CRM: tablero + chat en vivo + pausas) ----------
+// ---------- Clientes (CRM: tablero ampliado + chat en vivo + pausas) ----------
 const STATUS_COLUMNS = [
   { key: 'nuevo', label: '🆕 Nuevo', color: '#64748b' },
   { key: 'conversando', label: '💬 En conversación', color: '#3b82f6' },
   { key: 'interesado', label: '🔥 Interesado', color: '#f97316' },
   { key: 'comprado', label: '✅ Compra confirmada', color: '#16a34a' },
+  { key: 'guia_generada', label: '📦 Guía generada', color: '#8b5cf6' },
+  { key: 'en_camino', label: '🚚 En camino', color: '#0ea5e9' },
+  { key: 'con_novedad', label: '⚠️ Con novedad', color: '#ef4444' },
+  { key: 'entregado', label: '📬 Entregado', color: '#059669' },
+  { key: 'devuelto', label: '↩️ Devuelto', color: '#eab308' },
   { key: 'cancelado', label: '❌ Cancelado', color: '#dc2626' },
 ];
 const STATUS_LABELS = Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, c]));
@@ -442,32 +466,17 @@ function formatTime(ts) {
   return new Date(ts).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-// ---- Alternar entre vista de Tablero y vista de Chats ----
-function showTablerosView() {
-  document.getElementById('crmTablerosView').style.display = 'block';
-  document.getElementById('crmChatsView').style.display = 'none';
-  document.getElementById('crmViewTablerosBtn').className = 'save-btn';
-  document.getElementById('crmViewChatsBtn').className = 'cancel-btn';
-  renderBoard();
-}
-function showChatsView() {
-  document.getElementById('crmTablerosView').style.display = 'none';
-  document.getElementById('crmChatsView').style.display = 'block';
-  document.getElementById('crmViewTablerosBtn').className = 'cancel-btn';
-  document.getElementById('crmViewChatsBtn').className = 'save-btn';
-  renderClientList();
-}
-document.getElementById('crmViewTablerosBtn').addEventListener('click', showTablerosView);
-document.getElementById('crmViewChatsBtn').addEventListener('click', showChatsView);
-document.getElementById('refreshClientsBtn').addEventListener('click', loadClients);
-
 async function loadClients() {
   clientsCache = await fetch('/api/clients').then((r) => r.json());
   renderBoard();
   renderClientList();
 }
 
-// ---- Vista de Tablero (columnas por etapa, automático) ----
+document.getElementById('refreshClientsBtn').addEventListener('click', loadClients);
+document.getElementById('refreshBoardBtn').addEventListener('click', loadClients);
+
+// ---- Vista de Tablero (columnas por etapa; las de logística se mueven a mano
+// por ahora, hasta que conectemos el seguimiento automático de envíos) ----
 function renderBoard() {
   const container = document.getElementById('crmBoardColumns');
   if (!container) return;
@@ -475,28 +484,40 @@ function renderBoard() {
   STATUS_COLUMNS.forEach((col) => {
     const clientsInCol = clientsCache.filter((c) => c.status === col.key);
     const colDiv = document.createElement('div');
-    colDiv.style.cssText = 'min-width:230px;flex:1;background:#f9fafb;border-radius:10px;padding:10px;max-height:70vh;display:flex;flex-direction:column';
+    colDiv.className = 'board-column';
     colDiv.innerHTML = `
-      <div style="font-weight:700;color:${col.color};margin-bottom:8px;display:flex;justify-content:space-between;font-size:14px">
+      <div class="board-column-header" style="color:${col.color}">
         <span>${col.label}</span><span>${clientsInCol.length}</span>
       </div>
-      <div class="crm-cards" style="overflow-y:auto"></div>
+      <div class="board-cards"></div>
     `;
-    const cardsDiv = colDiv.querySelector('.crm-cards');
+    const cardsDiv = colDiv.querySelector('.board-cards');
     clientsInCol
       .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
       .forEach((c) => {
         const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
         const card = document.createElement('div');
-        card.style.cssText =
-          'background:white;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.1)';
+        card.className = 'board-card';
+        const optionsHtml = STATUS_COLUMNS.map(
+          (s) => `<option value="${s.key}" ${s.key === c.status ? 'selected' : ''}>${s.label}</option>`
+        ).join('');
         card.innerHTML = `
-          <div style="font-weight:600;font-size:13px">${c.name || c.phone}</div>
-          <div style="font-size:11px;color:#9ca3af;margin-top:2px">${formatTime(c.lastMessageAt)}${isPausedNow ? ' · ⏸️ pausado' : ''}</div>
+          <div class="board-card-name">${c.name || c.phone}</div>
+          <div class="board-card-meta">${formatTime(c.lastMessageAt)}${isPausedNow ? ' · ⏸️ pausado' : ''}</div>
+          <select data-jid="${c.jid}">${optionsHtml}</select>
         `;
-        card.addEventListener('click', () => {
-          showChatsView();
+        card.querySelector('.board-card-name').addEventListener('click', () => {
+          document.querySelector('.nav-item[data-tab="chats"]').click();
           selectClient(c.jid);
+        });
+        const select = card.querySelector('select');
+        select.addEventListener('click', (e) => e.stopPropagation());
+        select.addEventListener('change', async () => {
+          await fetch(`/api/clients/${encodeURIComponent(c.jid)}/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: select.value }),
+          });
         });
         cardsDiv.appendChild(card);
       });
@@ -513,13 +534,11 @@ function renderClientList() {
     const statusInfo = STATUS_LABELS[c.status] || { label: c.status, color: '#6b7280' };
     const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
     const item = document.createElement('div');
-    item.style.cssText =
-      'padding:8px;border-radius:8px;cursor:pointer;margin-bottom:6px;' +
-      (c.jid === selectedClientJid ? 'background:#eff6ff' : '');
+    item.className = 'client-list-item' + (c.jid === selectedClientJid ? ' selected' : '');
     item.innerHTML = `
-      <div style="font-weight:600">${c.name || c.phone}</div>
-      <div style="font-size:12px;color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
-      <div style="font-size:11px;color:#9ca3af">${formatTime(c.lastMessageAt)}</div>
+      <div class="name">${c.name || c.phone}</div>
+      <div class="meta" style="color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
+      <div class="time">${formatTime(c.lastMessageAt)}</div>
     `;
     item.addEventListener('click', () => selectClient(c.jid));
     listDiv.appendChild(item);
@@ -534,9 +553,9 @@ async function selectClient(jid) {
   const statusInfo = STATUS_LABELS[client?.status] || { label: client?.status || '', color: '#6b7280' };
   document.getElementById('chatHeader').innerHTML = `
     <b>${client?.name || client?.phone || jid.split('@')[0]}</b>
-    <span style="color:${statusInfo.color}"> · ${statusInfo.label}</span>
-    <a href="https://wa.me/${client?.phone}" target="_blank" style="margin-left:8px">💬 Abrir en WhatsApp</a>
-    <button id="deleteChatBtn" class="cancel-btn" style="margin-left:8px;color:#dc2626">🗑️ Borrar chat</button>
+    <span style="color:${statusInfo.color}">${statusInfo.label}</span>
+    <a href="https://wa.me/${client?.phone}" target="_blank">💬 Abrir en WhatsApp</a>
+    <button id="deleteChatBtn" class="cancel-btn" style="margin:0;color:#dc2626">🗑️ Borrar chat</button>
   `;
   document.getElementById('deleteChatBtn').addEventListener('click', () => deleteSelectedChat(jid));
 
@@ -573,24 +592,19 @@ function renderMessages(messages) {
 function appendMessageBubble(m) {
   const container = document.getElementById('chatMessages');
   const bubble = document.createElement('div');
-  const styles = {
-    client: 'align-self:flex-start;background:#f3f4f6;color:#111827',
-    bot: 'align-self:flex-end;background:#dcfce7;color:#111827',
-    owner: 'align-self:flex-end;background:#fef9c3;color:#111827',
-  };
   const labels = { client: 'Cliente', bot: 'Ángela', owner: 'Tú' };
-  bubble.style.cssText = `max-width:75%;padding:8px 12px;border-radius:10px;font-size:14px;${styles[m.from] || styles.client}`;
+  bubble.className = `chat-bubble ${m.from || 'client'}`;
 
   let mediaHtml = '';
   if (m.type === 'image' && m.mediaUrl) {
-    mediaHtml = `<img src="${m.mediaUrl}" style="max-width:220px;border-radius:8px;display:block;margin-top:4px" />`;
+    mediaHtml = `<img src="${m.mediaUrl}" />`;
   } else if ((m.type === 'audio' || m.type === 'voice') && m.mediaUrl) {
-    mediaHtml = `<audio controls src="${m.mediaUrl}" style="margin-top:4px;max-width:220px"></audio>`;
+    mediaHtml = `<audio controls src="${m.mediaUrl}"></audio>`;
   }
   const icon = m.type === 'voice' && !m.mediaUrl ? '🎙️ ' : '';
 
   bubble.innerHTML = `
-    <div style="font-size:11px;opacity:0.6;margin-bottom:2px">${labels[m.from] || m.from} · ${formatTime(m.timestamp)}</div>
+    <div class="bubble-meta">${labels[m.from] || m.from} · ${formatTime(m.timestamp)}</div>
     <div>${icon}${(m.text || '').replace(/</g, '&lt;')}</div>
     ${mediaHtml}
   `;
@@ -602,15 +616,15 @@ function appendMessageBubble(m) {
 function renderPauseBar(pausedUntil) {
   const div = document.getElementById('pauseBar');
   const isPausedNow = pausedUntil && pausedUntil > Date.now();
-  div.style.display = 'block';
+  div.style.display = 'flex';
 
   if (isPausedNow) {
     const until = new Date(pausedUntil).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
     div.innerHTML = `
       <span>⏸️ Bot pausado en este chat hasta las ${until}</span>
-      <button id="resumeNowBtn" class="cancel-btn" style="margin-left:8px">▶ Reanudar ya</button>
-      <button id="extend10Btn" class="cancel-btn">+10 min</button>
-      <button id="extend30Btn" class="cancel-btn">+30 min</button>
+      <button id="resumeNowBtn" class="cancel-btn" style="margin:0">▶ Reanudar ya</button>
+      <button id="extend10Btn" class="cancel-btn" style="margin:0">+10 min</button>
+      <button id="extend30Btn" class="cancel-btn" style="margin:0">+30 min</button>
     `;
     document.getElementById('resumeNowBtn').addEventListener('click', async () => {
       await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/resume`, { method: 'POST' });
@@ -619,10 +633,10 @@ function renderPauseBar(pausedUntil) {
     document.getElementById('extend30Btn').addEventListener('click', () => pauseSelected(30));
   } else {
     div.innerHTML = `
-      <span class="hint small">El bot está respondiendo automático aquí. Pausarlo manualmente:</span>
-      <button id="pause10Btn" class="cancel-btn" style="margin-left:8px">⏸️ 10 min</button>
-      <button id="pause30Btn" class="cancel-btn">⏸️ 30 min</button>
-      <button id="pause60Btn" class="cancel-btn">⏸️ 60 min</button>
+      <span>El bot está respondiendo automático aquí. Pausarlo manualmente:</span>
+      <button id="pause10Btn" class="cancel-btn" style="margin:0">⏸️ 10 min</button>
+      <button id="pause30Btn" class="cancel-btn" style="margin:0">⏸️ 30 min</button>
+      <button id="pause60Btn" class="cancel-btn" style="margin:0">⏸️ 60 min</button>
     `;
     document.getElementById('pause10Btn').addEventListener('click', () => pauseSelected(10));
     document.getElementById('pause30Btn').addEventListener('click', () => pauseSelected(30));
@@ -639,7 +653,7 @@ async function pauseSelected(minutes) {
   });
 }
 
-// ---- Enviar texto ----
+// ---- Enviar texto / imagen / audio ----
 document.getElementById('chatSendBtn').addEventListener('click', async () => {
   const input = document.getElementById('chatReplyInput');
   const text = input.value.trim();
