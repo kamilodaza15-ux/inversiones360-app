@@ -1,6 +1,6 @@
 {
-  "version": "1.19.0",
-  "notes": "CRM con tablero visual (5 etapas automáticas), ventana de chat mejorada con envío de imagen/audio, y controles de pausa siempre visibles. Además, arregla el bucle de auto-pausa con el número propio.",
+  "version": "1.19.1",
+  "notes": "Botón para borrar por completo la conversación de un cliente (chat, memoria de la IA, y estado del CRM) — útil para hacer pruebas.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
