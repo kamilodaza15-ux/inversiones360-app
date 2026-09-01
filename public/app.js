@@ -192,7 +192,7 @@ fetch('/api/network-info')
 // ---------- Configuración ----------
 const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
-  'responseDelaySeconds', 'notificationPhoneNumber', 'aiProvider', 'groqApiKey',
+  'responseDelaySeconds', 'notificationPhoneNumber', 'pauseDurationMinutes', 'aiProvider', 'groqApiKey',
   'openaiApiKey',
 ];
 // groqModel y openaiModel se manejan aparte porque son selects con opción
@@ -251,7 +251,7 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   const body = {};
   cfgFields.forEach((f) => {
     const el = document.getElementById(`cfg-${f}`);
-    body[f] = f === 'responseDelaySeconds' ? Number(el.value) : el.value;
+    body[f] = (f === 'responseDelaySeconds' || f === 'pauseDurationMinutes') ? Number(el.value) : el.value;
   });
   body.groqModel = getModelValue('cfg-groqModel', 'cfg-groqModel-custom');
   body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
@@ -423,6 +423,155 @@ document.getElementById('previewVoiceBtn').addEventListener('click', async () =>
     btn.disabled = false;
   }
 });
+
+// ---------- Clientes (CRM: lista + chat en vivo + pausas) ----------
+const STATUS_LABELS = {
+  interesado: { text: '🔵 Interesado', color: '#3b82f6' },
+  comprado: { text: '🟢 Comprado', color: '#16a34a' },
+  cancelado: { text: '🔴 Cancelado', color: '#dc2626' },
+};
+
+let selectedClientJid = null;
+let clientsCache = [];
+
+function formatTime(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadClients() {
+  clientsCache = await fetch('/api/clients').then((r) => r.json());
+  renderClientList();
+}
+
+function renderClientList() {
+  const listDiv = document.getElementById('clientList');
+  listDiv.innerHTML = '';
+  clientsCache.forEach((c) => {
+    const statusInfo = STATUS_LABELS[c.status] || { text: c.status, color: '#6b7280' };
+    const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
+    const item = document.createElement('div');
+    item.style.cssText =
+      'padding:8px;border-radius:8px;cursor:pointer;margin-bottom:6px;' +
+      (c.jid === selectedClientJid ? 'background:#eff6ff' : '');
+    item.innerHTML = `
+      <div style="font-weight:600">${c.name || c.phone}</div>
+      <div style="font-size:12px;color:${statusInfo.color}">${statusInfo.text}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
+      <div style="font-size:11px;color:#9ca3af">${formatTime(c.lastMessageAt)}</div>
+    `;
+    item.addEventListener('click', () => selectClient(c.jid));
+    listDiv.appendChild(item);
+  });
+}
+
+async function selectClient(jid) {
+  selectedClientJid = jid;
+  renderClientList();
+
+  const client = clientsCache.find((c) => c.jid === jid);
+  const statusInfo = STATUS_LABELS[client?.status] || { text: client?.status || '', color: '#6b7280' };
+  document.getElementById('chatHeader').innerHTML = `
+    <b>${client?.name || client?.phone || jid.split('@')[0]}</b>
+    <span style="color:${statusInfo.color}"> · ${statusInfo.text}</span>
+    <a href="https://wa.me/${client?.phone}" target="_blank" style="margin-left:8px">💬 Abrir en WhatsApp</a>
+  `;
+
+  const messages = await fetch(`/api/clients/${encodeURIComponent(jid)}/messages`).then((r) => r.json());
+  renderMessages(messages);
+  renderPauseControls(client?.pausedUntil);
+}
+
+function renderMessages(messages) {
+  const container = document.getElementById('chatMessages');
+  container.innerHTML = '';
+  messages.forEach((m) => appendMessageBubble(m));
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendMessageBubble(m) {
+  const container = document.getElementById('chatMessages');
+  const bubble = document.createElement('div');
+  const styles = {
+    client: 'align-self:flex-start;background:#f3f4f6;color:#111827',
+    bot: 'align-self:flex-end;background:#dcfce7;color:#111827',
+    owner: 'align-self:flex-end;background:#fef9c3;color:#111827',
+  };
+  const labels = { client: 'Cliente', bot: 'Ángela', owner: 'Tú' };
+  bubble.style.cssText = `max-width:75%;padding:8px 12px;border-radius:10px;font-size:14px;${styles[m.from] || styles.client}`;
+  const icon = m.type === 'voice' ? '🎙️ ' : '';
+  bubble.innerHTML = `
+    <div style="font-size:11px;opacity:0.6;margin-bottom:2px">${labels[m.from] || m.from} · ${formatTime(m.timestamp)}</div>
+    <div>${icon}${(m.text || '').replace(/</g, '&lt;')}</div>
+  `;
+  container.appendChild(bubble);
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderPauseControls(pausedUntil) {
+  const div = document.getElementById('pauseControls');
+  const isPausedNow = pausedUntil && pausedUntil > Date.now();
+  if (!isPausedNow) {
+    div.style.display = 'none';
+    div.innerHTML = '';
+    return;
+  }
+  div.style.display = 'block';
+  const until = new Date(pausedUntil).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+  div.innerHTML = `
+    <span>⏸️ Bot pausado en este chat hasta las ${until}</span>
+    <button id="resumeNowBtn" class="cancel-btn" style="margin-left:8px">▶ Reanudar ya</button>
+    <button id="extend10Btn" class="cancel-btn">+10 min</button>
+    <button id="extend30Btn" class="cancel-btn">+30 min</button>
+  `;
+  document.getElementById('resumeNowBtn').addEventListener('click', async () => {
+    await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/resume`, { method: 'POST' });
+  });
+  document.getElementById('extend10Btn').addEventListener('click', async () => {
+    await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/pause`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minutes: 10 }),
+    });
+  });
+  document.getElementById('extend30Btn').addEventListener('click', async () => {
+    await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/pause`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minutes: 30 }),
+    });
+  });
+}
+
+document.getElementById('refreshClientsBtn').addEventListener('click', loadClients);
+
+document.getElementById('chatSendBtn').addEventListener('click', async () => {
+  const input = document.getElementById('chatReplyInput');
+  const text = input.value.trim();
+  if (!text || !selectedClientJid) return;
+  input.value = '';
+  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).then((r) => r.json());
+  if (!res.ok) alert(res.error || 'No se pudo enviar');
+});
+document.getElementById('chatReplyInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('chatSendBtn').click();
+});
+
+// Actualizaciones en vivo, sin tener que recargar la pestaña
+socket.on('chatMessage', ({ jid, entry }) => {
+  if (jid === selectedClientJid) appendMessageBubble(entry);
+  loadClients(); // refresca la lista (orden, últimos mensajes)
+});
+socket.on('clientUpdate', () => loadClients());
+socket.on('pauseUpdate', ({ jid, pausedUntil }) => {
+  loadClients();
+  if (jid === selectedClientJid) renderPauseControls(pausedUntil);
+});
+
+loadClients();
 
 // ---------- Respaldo (exportar / importar productos y configuración) ----------
 document.getElementById('exportBackupBtn').addEventListener('click', () => {
