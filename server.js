@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.17.0';
+const CURRENT_VERSION = '1.17.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -178,6 +178,20 @@ function resolveFfmpegPath() {
         err.message
       );
     }
+  }
+
+  // Antes de rendirnos, revisamos si "ffmpeg" ya está disponible directo en
+  // el sistema (esto es lo normal en Linux/Termux/Android, donde ffmpeg se
+  // instala con el gestor de paquetes del propio sistema — pkg install
+  // ffmpeg — en vez de depender de ffmpeg-static, que no tiene versión
+  // compilada para esa arquitectura).
+  try {
+    const { execSync } = require('child_process');
+    execSync('ffmpeg -version', { stdio: 'ignore' });
+    console.log('✅ FFmpeg encontrado en el PATH del sistema.');
+    return 'ffmpeg';
+  } catch (err) {
+    // no está en el PATH tampoco, seguimos al error final
   }
 
   throw new Error(
