@@ -424,12 +424,15 @@ document.getElementById('previewVoiceBtn').addEventListener('click', async () =>
   }
 });
 
-// ---------- Clientes (CRM: lista + chat en vivo + pausas) ----------
-const STATUS_LABELS = {
-  interesado: { text: '🔵 Interesado', color: '#3b82f6' },
-  comprado: { text: '🟢 Comprado', color: '#16a34a' },
-  cancelado: { text: '🔴 Cancelado', color: '#dc2626' },
-};
+// ---------- Clientes (CRM: tablero + chat en vivo + pausas) ----------
+const STATUS_COLUMNS = [
+  { key: 'nuevo', label: '🆕 Nuevo', color: '#64748b' },
+  { key: 'conversando', label: '💬 En conversación', color: '#3b82f6' },
+  { key: 'interesado', label: '🔥 Interesado', color: '#f97316' },
+  { key: 'comprado', label: '✅ Compra confirmada', color: '#16a34a' },
+  { key: 'cancelado', label: '❌ Cancelado', color: '#dc2626' },
+];
+const STATUS_LABELS = Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, c]));
 
 let selectedClientJid = null;
 let clientsCache = [];
@@ -439,16 +442,75 @@ function formatTime(ts) {
   return new Date(ts).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// ---- Alternar entre vista de Tablero y vista de Chats ----
+function showTablerosView() {
+  document.getElementById('crmTablerosView').style.display = 'block';
+  document.getElementById('crmChatsView').style.display = 'none';
+  document.getElementById('crmViewTablerosBtn').className = 'save-btn';
+  document.getElementById('crmViewChatsBtn').className = 'cancel-btn';
+  renderBoard();
+}
+function showChatsView() {
+  document.getElementById('crmTablerosView').style.display = 'none';
+  document.getElementById('crmChatsView').style.display = 'block';
+  document.getElementById('crmViewTablerosBtn').className = 'cancel-btn';
+  document.getElementById('crmViewChatsBtn').className = 'save-btn';
+  renderClientList();
+}
+document.getElementById('crmViewTablerosBtn').addEventListener('click', showTablerosView);
+document.getElementById('crmViewChatsBtn').addEventListener('click', showChatsView);
+document.getElementById('refreshClientsBtn').addEventListener('click', loadClients);
+
 async function loadClients() {
   clientsCache = await fetch('/api/clients').then((r) => r.json());
+  renderBoard();
   renderClientList();
 }
 
+// ---- Vista de Tablero (columnas por etapa, automático) ----
+function renderBoard() {
+  const container = document.getElementById('crmBoardColumns');
+  if (!container) return;
+  container.innerHTML = '';
+  STATUS_COLUMNS.forEach((col) => {
+    const clientsInCol = clientsCache.filter((c) => c.status === col.key);
+    const colDiv = document.createElement('div');
+    colDiv.style.cssText = 'min-width:230px;flex:1;background:#f9fafb;border-radius:10px;padding:10px;max-height:70vh;display:flex;flex-direction:column';
+    colDiv.innerHTML = `
+      <div style="font-weight:700;color:${col.color};margin-bottom:8px;display:flex;justify-content:space-between;font-size:14px">
+        <span>${col.label}</span><span>${clientsInCol.length}</span>
+      </div>
+      <div class="crm-cards" style="overflow-y:auto"></div>
+    `;
+    const cardsDiv = colDiv.querySelector('.crm-cards');
+    clientsInCol
+      .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
+      .forEach((c) => {
+        const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
+        const card = document.createElement('div');
+        card.style.cssText =
+          'background:white;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.1)';
+        card.innerHTML = `
+          <div style="font-weight:600;font-size:13px">${c.name || c.phone}</div>
+          <div style="font-size:11px;color:#9ca3af;margin-top:2px">${formatTime(c.lastMessageAt)}${isPausedNow ? ' · ⏸️ pausado' : ''}</div>
+        `;
+        card.addEventListener('click', () => {
+          showChatsView();
+          selectClient(c.jid);
+        });
+        cardsDiv.appendChild(card);
+      });
+    container.appendChild(colDiv);
+  });
+}
+
+// ---- Vista de Chats (lista + conversación) ----
 function renderClientList() {
   const listDiv = document.getElementById('clientList');
+  if (!listDiv) return;
   listDiv.innerHTML = '';
   clientsCache.forEach((c) => {
-    const statusInfo = STATUS_LABELS[c.status] || { text: c.status, color: '#6b7280' };
+    const statusInfo = STATUS_LABELS[c.status] || { label: c.status, color: '#6b7280' };
     const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
     const item = document.createElement('div');
     item.style.cssText =
@@ -456,7 +518,7 @@ function renderClientList() {
       (c.jid === selectedClientJid ? 'background:#eff6ff' : '');
     item.innerHTML = `
       <div style="font-weight:600">${c.name || c.phone}</div>
-      <div style="font-size:12px;color:${statusInfo.color}">${statusInfo.text}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
+      <div style="font-size:12px;color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
       <div style="font-size:11px;color:#9ca3af">${formatTime(c.lastMessageAt)}</div>
     `;
     item.addEventListener('click', () => selectClient(c.jid));
@@ -469,16 +531,16 @@ async function selectClient(jid) {
   renderClientList();
 
   const client = clientsCache.find((c) => c.jid === jid);
-  const statusInfo = STATUS_LABELS[client?.status] || { text: client?.status || '', color: '#6b7280' };
+  const statusInfo = STATUS_LABELS[client?.status] || { label: client?.status || '', color: '#6b7280' };
   document.getElementById('chatHeader').innerHTML = `
     <b>${client?.name || client?.phone || jid.split('@')[0]}</b>
-    <span style="color:${statusInfo.color}"> · ${statusInfo.text}</span>
+    <span style="color:${statusInfo.color}"> · ${statusInfo.label}</span>
     <a href="https://wa.me/${client?.phone}" target="_blank" style="margin-left:8px">💬 Abrir en WhatsApp</a>
   `;
 
   const messages = await fetch(`/api/clients/${encodeURIComponent(jid)}/messages`).then((r) => r.json());
   renderMessages(messages);
-  renderPauseControls(client?.pausedUntil);
+  renderPauseBar(client?.pausedUntil);
 }
 
 function renderMessages(messages) {
@@ -498,77 +560,110 @@ function appendMessageBubble(m) {
   };
   const labels = { client: 'Cliente', bot: 'Ángela', owner: 'Tú' };
   bubble.style.cssText = `max-width:75%;padding:8px 12px;border-radius:10px;font-size:14px;${styles[m.from] || styles.client}`;
-  const icon = m.type === 'voice' ? '🎙️ ' : '';
+
+  let mediaHtml = '';
+  if (m.type === 'image' && m.mediaUrl) {
+    mediaHtml = `<img src="${m.mediaUrl}" style="max-width:220px;border-radius:8px;display:block;margin-top:4px" />`;
+  } else if ((m.type === 'audio' || m.type === 'voice') && m.mediaUrl) {
+    mediaHtml = `<audio controls src="${m.mediaUrl}" style="margin-top:4px;max-width:220px"></audio>`;
+  }
+  const icon = m.type === 'voice' && !m.mediaUrl ? '🎙️ ' : '';
+
   bubble.innerHTML = `
     <div style="font-size:11px;opacity:0.6;margin-bottom:2px">${labels[m.from] || m.from} · ${formatTime(m.timestamp)}</div>
     <div>${icon}${(m.text || '').replace(/</g, '&lt;')}</div>
+    ${mediaHtml}
   `;
   container.appendChild(bubble);
   container.scrollTop = container.scrollHeight;
 }
 
-function renderPauseControls(pausedUntil) {
-  const div = document.getElementById('pauseControls');
+// ---- Barra de pausa: siempre visible, con botones proactivos o de reanudar ----
+function renderPauseBar(pausedUntil) {
+  const div = document.getElementById('pauseBar');
   const isPausedNow = pausedUntil && pausedUntil > Date.now();
-  if (!isPausedNow) {
-    div.style.display = 'none';
-    div.innerHTML = '';
-    return;
-  }
   div.style.display = 'block';
-  const until = new Date(pausedUntil).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-  div.innerHTML = `
-    <span>⏸️ Bot pausado en este chat hasta las ${until}</span>
-    <button id="resumeNowBtn" class="cancel-btn" style="margin-left:8px">▶ Reanudar ya</button>
-    <button id="extend10Btn" class="cancel-btn">+10 min</button>
-    <button id="extend30Btn" class="cancel-btn">+30 min</button>
-  `;
-  document.getElementById('resumeNowBtn').addEventListener('click', async () => {
-    await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/resume`, { method: 'POST' });
-  });
-  document.getElementById('extend10Btn').addEventListener('click', async () => {
-    await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/pause`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ minutes: 10 }),
+
+  if (isPausedNow) {
+    const until = new Date(pausedUntil).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+    div.innerHTML = `
+      <span>⏸️ Bot pausado en este chat hasta las ${until}</span>
+      <button id="resumeNowBtn" class="cancel-btn" style="margin-left:8px">▶ Reanudar ya</button>
+      <button id="extend10Btn" class="cancel-btn">+10 min</button>
+      <button id="extend30Btn" class="cancel-btn">+30 min</button>
+    `;
+    document.getElementById('resumeNowBtn').addEventListener('click', async () => {
+      await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/resume`, { method: 'POST' });
     });
-  });
-  document.getElementById('extend30Btn').addEventListener('click', async () => {
-    await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/pause`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ minutes: 30 }),
-    });
+    document.getElementById('extend10Btn').addEventListener('click', () => pauseSelected(10));
+    document.getElementById('extend30Btn').addEventListener('click', () => pauseSelected(30));
+  } else {
+    div.innerHTML = `
+      <span class="hint small">El bot está respondiendo automático aquí. Pausarlo manualmente:</span>
+      <button id="pause10Btn" class="cancel-btn" style="margin-left:8px">⏸️ 10 min</button>
+      <button id="pause30Btn" class="cancel-btn">⏸️ 30 min</button>
+      <button id="pause60Btn" class="cancel-btn">⏸️ 60 min</button>
+    `;
+    document.getElementById('pause10Btn').addEventListener('click', () => pauseSelected(10));
+    document.getElementById('pause30Btn').addEventListener('click', () => pauseSelected(30));
+    document.getElementById('pause60Btn').addEventListener('click', () => pauseSelected(60));
+  }
+}
+
+async function pauseSelected(minutes) {
+  if (!selectedClientJid) return;
+  await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/pause`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ minutes }),
   });
 }
 
-document.getElementById('refreshClientsBtn').addEventListener('click', loadClients);
-
+// ---- Enviar texto ----
 document.getElementById('chatSendBtn').addEventListener('click', async () => {
   const input = document.getElementById('chatReplyInput');
   const text = input.value.trim();
-  if (!text || !selectedClientJid) return;
-  input.value = '';
-  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  }).then((r) => r.json());
-  if (!res.ok) alert(res.error || 'No se pudo enviar');
+  if (!selectedClientJid) return;
+
+  const mediaFile = document.getElementById('chatMediaInput').files[0];
+  if (mediaFile) {
+    const formData = new FormData();
+    formData.append('media', mediaFile);
+    const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send-media`, {
+      method: 'POST',
+      body: formData,
+    }).then((r) => r.json());
+    if (!res.ok) alert(res.error || 'No se pudo enviar el archivo');
+    document.getElementById('chatMediaInput').value = '';
+  }
+
+  if (text) {
+    input.value = '';
+    const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).then((r) => r.json());
+    if (!res.ok) alert(res.error || 'No se pudo enviar');
+  }
 });
 document.getElementById('chatReplyInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('chatSendBtn').click();
 });
+document.getElementById('chatMediaInput').addEventListener('change', () => {
+  const file = document.getElementById('chatMediaInput').files[0];
+  if (file) document.getElementById('chatReplyInput').placeholder = `Adjunto: ${file.name} (dale Enviar)`;
+});
 
-// Actualizaciones en vivo, sin tener que recargar la pestaña
+// ---- Actualizaciones en vivo, sin recargar nada ----
 socket.on('chatMessage', ({ jid, entry }) => {
   if (jid === selectedClientJid) appendMessageBubble(entry);
-  loadClients(); // refresca la lista (orden, últimos mensajes)
+  loadClients();
 });
 socket.on('clientUpdate', () => loadClients());
 socket.on('pauseUpdate', ({ jid, pausedUntil }) => {
   loadClients();
-  if (jid === selectedClientJid) renderPauseControls(pausedUntil);
+  if (jid === selectedClientJid) renderPauseBar(pausedUntil);
 });
 
 loadClients();
