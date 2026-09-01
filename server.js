@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.18.0';
+const CURRENT_VERSION = '1.19.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -538,6 +538,52 @@ app.post('/api/clients/:jid/send', async (req, res) => {
     await sendAndTrack(jid, { text });
     ensureClientRecord(jid);
     appendChatLog(jid, { from: 'owner', text, type: 'text', timestamp: Date.now() });
+    const cfgNow = readConfig();
+    const minutes = Number(cfgNow.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
+    pauseChat(jid, minutes);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo enviar: ' + err.message });
+  }
+});
+
+// Enviar una imagen o un audio desde la misma ventana de chat del panel.
+const uploadChatMedia = multer({
+  storage: multer.diskStorage({
+    destination: MEDIA_DIR,
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || '';
+      cb(null, `chat-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`);
+    },
+  }),
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('image/') && !file.mimetype.startsWith('audio/')) {
+      return cb(new Error('Solo se pueden enviar imágenes o audios desde aquí'));
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 25 * 1024 * 1024 },
+}).single('media');
+
+app.post('/api/clients/:jid/send-media', uploadChatMedia, async (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  if (!req.file) return res.status(400).json({ error: 'No llegó ningún archivo' });
+  if (!sock) return res.status(400).json({ error: 'El bot no está conectado a WhatsApp' });
+  try {
+    const filePath = req.file.path;
+    const buffer = fs.readFileSync(filePath);
+    const isImage = req.file.mimetype.startsWith('image/');
+    const content = isImage ? { image: buffer } : { audio: buffer, mimetype: req.file.mimetype, ptt: false };
+    await sendAndTrack(jid, content);
+
+    ensureClientRecord(jid);
+    appendChatLog(jid, {
+      from: 'owner',
+      text: isImage ? '(imagen enviada)' : '(audio enviado)',
+      type: isImage ? 'image' : 'audio',
+      mediaUrl: `/media/${req.file.filename}`,
+      timestamp: Date.now(),
+    });
     const cfgNow = readConfig();
     const minutes = Number(cfgNow.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
     pauseChat(jid, minutes);
@@ -1122,7 +1168,8 @@ function ensureClientRecord(jid) {
     clients.set(jid, {
       phone: jid.split('@')[0],
       name: '',
-      status: 'interesado',
+      status: 'nuevo',
+      messageCount: 0,
       lastMessageAt: Date.now(),
       createdAt: Date.now(),
     });
@@ -1131,6 +1178,26 @@ function ensureClientRecord(jid) {
   }
   saveClients();
   io.emit('clientUpdate', { jid, client: clients.get(jid) });
+}
+
+// Avanza la etapa del cliente sola, según cuántos mensajes lleva la
+// conversación — solo si todavía está en una etapa "temprana" (nuevo o en
+// conversación). Nunca retrocede una etapa, y nunca pisa "comprado" ni
+// "cancelado" (esas se marcan aparte, con la frase exacta detectada).
+function advanceClientStageIfNeeded(jid) {
+  const rec = clients.get(jid);
+  if (!rec) return;
+  rec.messageCount = (rec.messageCount || 0) + 1;
+
+  if (rec.status === 'nuevo') {
+    rec.status = 'conversando';
+  }
+  if (rec.status === 'conversando' && rec.messageCount >= 3) {
+    rec.status = 'interesado';
+  }
+  clients.set(jid, rec);
+  saveClients();
+  io.emit('clientUpdate', { jid, client: rec });
 }
 
 function updateClientStatus(jid, status, extra) {
@@ -1197,6 +1264,15 @@ function extractNameFromOrderText(text) {
 // distintos que necesitan tratarse diferente (el segundo pausa el chat).
 const botSentMessageIds = new Set();
 const MAX_BOT_SENT_IDS = 500;
+
+// Recuerda los IDs de TODOS los mensajes ya procesados (de clientes y del
+// dueño), para no volver a procesarlos si Baileys los entrega de nuevo —
+// pasa seguido justo después de una reconexión. IMPORTANTE: esto vive fuera
+// de startBot() a propósito, para que sobreviva cuando el bot se reconecta
+// solo (si estuviera adentro, se resetearía en cada reconexión y volvería a
+// tratar mensajes viejos como si fueran nuevos).
+const processedMessageIds = new Set();
+const MAX_PROCESSED_IDS = 500;
 
 async function sendAndTrack(jid, content, options) {
   const result = await sock.sendMessage(jid, content, options);
@@ -1284,20 +1360,37 @@ async function startBot() {
     }
   });
 
-  // Recuerda los IDs de mensajes ya procesados, para no responder dos veces
-  // al mismo mensaje si Baileys lo llega a entregar duplicado (pasa a veces
-  // en reconexiones). Se limita el tamaño para no crecer sin fin.
-  const processedMessageIds = new Set();
-  const MAX_PROCESSED_IDS = 500;
-
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
+
+    // El propio número del bot (el que escaneaste) — WhatsApp a veces manda
+    // mensajes de "auto-chat"/sincronización con este mismo número como
+    // remitente, que no son ni un cliente real ni una intervención tuya.
+    // Los ignoramos por completo.
+    const ownNumber = sock.user?.id ? sock.user.id.split(':')[0] : null;
+    const ownJid = ownNumber ? `${ownNumber}@s.whatsapp.net` : null;
+
     for (const msg of messages) {
       if (msg.key.remoteJid?.endsWith('@g.us')) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
+      if (ownJid && msg.key.remoteJid === ownJid) continue;
+
+      // Anti-duplicados: aplica a CUALQUIER mensaje (del cliente o tuyo si
+      // interviniste), para que una reconexión no lo vuelva a procesar dos veces.
+      const msgId = msg.key.id;
+      if (msgId) {
+        if (processedMessageIds.has(msgId)) {
+          io.emit('log', `⏭️ Mensaje duplicado ignorado (${msgId})`);
+          continue;
+        }
+        processedMessageIds.add(msgId);
+        if (processedMessageIds.size > MAX_PROCESSED_IDS) {
+          const oldest = processedMessageIds.values().next().value;
+          processedMessageIds.delete(oldest);
+        }
+      }
 
       if (msg.key.fromMe) {
-        const msgId = msg.key.id;
         if (msgId && botSentMessageIds.has(msgId)) {
           continue; // eco de un mensaje que el propio bot ya mandó, no es una intervención
         }
@@ -1314,19 +1407,6 @@ async function startBot() {
         pauseChat(jid, minutes);
         io.emit('log', `✋ Interviniste en ${jid.split('@')[0]} — bot pausado ${minutes} min ahí`);
         continue;
-      }
-
-      const msgId = msg.key.id;
-      if (msgId) {
-        if (processedMessageIds.has(msgId)) {
-          io.emit('log', `⏭️ Mensaje duplicado ignorado (${msgId})`);
-          continue;
-        }
-        processedMessageIds.add(msgId);
-        if (processedMessageIds.size > MAX_PROCESSED_IDS) {
-          const oldest = processedMessageIds.values().next().value;
-          processedMessageIds.delete(oldest);
-        }
       }
 
       // Encola el mensaje: si el mismo cliente manda varios seguidos, se procesan
@@ -1374,6 +1454,7 @@ async function startBot() {
 
       // ---- Registrar en el CRM: se guarda SIEMPRE, esté pausado o no ----
       ensureClientRecord(userId);
+      advanceClientStageIfNeeded(userId);
       appendChatLog(userId, {
         from: 'client',
         text: messageText,
