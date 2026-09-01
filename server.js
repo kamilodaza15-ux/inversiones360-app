@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.16.0';
+const CURRENT_VERSION = '1.17.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -678,10 +678,70 @@ async function minimaxTextToSpeech(cfg, text) {
 // que se arregle con el prompt. La solución es quitar el símbolo antes de
 // mandarlo a hablar, dejando la palabra "pesos" en su lugar. Esto SOLO
 // afecta el audio — el texto normal en WhatsApp se sigue viendo igual.
+// Convierte un número entero a palabras en español (ej. 25000 -> "veinticinco mil").
+// Cubre hasta cientos de millones, más que suficiente para precios de productos.
+function numberToSpanishWords(num) {
+  if (num === 0) return 'cero';
+
+  const unidades = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'];
+  const especiales = ['diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve'];
+  const decenas = ['', '', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+  const centenas = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos'];
+
+  function convertirGrupo(n) {
+    if (n === 100) return 'cien';
+    let str = '';
+    const c = Math.floor(n / 100);
+    const resto = n % 100;
+    if (c > 0) str += centenas[c] + ' ';
+    if (resto >= 10 && resto <= 19) {
+      str += especiales[resto - 10];
+    } else {
+      const d = Math.floor(resto / 10);
+      const u = resto % 10;
+      if (d === 2 && u > 0) {
+        str += 'veinti' + unidades[u];
+      } else {
+        if (d > 0) str += decenas[d];
+        if (d > 0 && u > 0) str += ' y ';
+        if (u > 0) str += unidades[u];
+      }
+    }
+    return str.trim();
+  }
+
+  let result = '';
+  const millones = Math.floor(num / 1000000);
+  const miles = Math.floor((num % 1000000) / 1000);
+  const resto = num % 1000;
+
+  if (millones > 0) {
+    result += (millones === 1 ? 'un millón' : convertirGrupo(millones) + ' millones') + ' ';
+  }
+  if (miles > 0) {
+    result += (miles === 1 ? 'mil' : convertirGrupo(miles) + ' mil') + ' ';
+  }
+  if (resto > 0) {
+    result += convertirGrupo(resto);
+  }
+
+  return result.trim();
+}
+
+// MiniMax lee el símbolo "$" como dólares por defecto, y además puede leer
+// mal números con puntos de miles (ej. "25.000" a veces sale como "veinticinco
+// punto cero cero cero"). Para evitar ambigüedad, convertimos el precio
+// completo a palabras antes de mandarlo a hablar — esto SOLO afecta el
+// audio, el texto normal en WhatsApp se sigue viendo igual ("$25.000").
 function prepareTextForSpeech(text) {
   return text
-    .replace(/\$\s?([\d.,]+)/g, '$1 pesos') // "$99.900" -> "99.900 pesos"
-    .replace(/\bCOP\b/gi, ''); // evita que quede "99.900 pesos COP" repetido
+    .replace(/\$\s?([\d.,]+)/g, (match, numStr) => {
+      const digitsOnly = numStr.replace(/[.,]/g, '');
+      const num = parseInt(digitsOnly, 10);
+      if (isNaN(num)) return match; // no se pudo interpretar, se deja tal cual
+      return `${numberToSpanishWords(num)} pesos`;
+    })
+    .replace(/\bCOP\b/gi, ''); // evita que quede "...pesos COP" repetido
 }
 
 async function sendVoiceReply(userId, text) {
@@ -882,6 +942,11 @@ ${cfg.baseInstructions}
 CATÁLOGO DE PRODUCTOS (usa SOLO esta información, nunca inventes precios ni beneficios):
 ${catalog || '(Todavía no hay productos cargados)'}
 
+REGLA DE CATÁLOGO — LA MÁS IMPORTANTE DE TODAS, NUNCA LA ROMPAS:
+Los ÚNICOS productos que existen son los que aparecen en el catálogo de arriba. Si el cliente pregunta por algo que NO está en esa lista (otro producto, otro nombre, otra categoría), debes decir con claridad que no lo tienes disponible — NUNCA inventes un producto, nombre, precio, uso o característica que no esté escrito exactamente en el catálogo, así el cliente insista o describa algo que "suena parecido". Inventar un producto que no existe es el peor error que puedes cometer — genera confusión, pedidos que no se pueden cumplir, y hace quedar mal al negocio.
+
+Igual de importante cuando hay VARIOS productos reales en el catálogo: cada detalle (precio, forma de uso, beneficios, ingredientes) pertenece SOLO al producto exacto donde está escrito. Antes de responder, verifica de cuál producto está hablando el cliente en ESE momento de la conversación, y usa ÚNICAMENTE los detalles de ese producto — nunca tomes prestado un dato de otro producto del catálogo, aunque parezca similar.
+
 Si el cliente pregunta por un producto específico, responde con los detalles de ESE producto.
 Si pregunta en general, puedes mencionar brevemente los productos disponibles y preguntar cuál le interesa.
 
@@ -1010,12 +1075,32 @@ async function startBot() {
     }
   });
 
+  // Recuerda los IDs de mensajes ya procesados, para no responder dos veces
+  // al mismo mensaje si Baileys lo llega a entregar duplicado (pasa a veces
+  // en reconexiones). Se limita el tamaño para no crecer sin fin.
+  const processedMessageIds = new Set();
+  const MAX_PROCESSED_IDS = 500;
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
       if (msg.key.fromMe) continue;
       if (msg.key.remoteJid?.endsWith('@g.us')) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
+
+      const msgId = msg.key.id;
+      if (msgId) {
+        if (processedMessageIds.has(msgId)) {
+          io.emit('log', `⏭️ Mensaje duplicado ignorado (${msgId})`);
+          continue;
+        }
+        processedMessageIds.add(msgId);
+        if (processedMessageIds.size > MAX_PROCESSED_IDS) {
+          const oldest = processedMessageIds.values().next().value;
+          processedMessageIds.delete(oldest);
+        }
+      }
+
       // Encola el mensaje: si el mismo cliente manda varios seguidos, se procesan
       // uno por uno y en orden, sin pisarse entre sí.
       enqueueForUser(msg.key.remoteJid, () => processMessage(msg));
@@ -1134,9 +1219,16 @@ async function startBot() {
       // ---- Responder con audio (voz clonada) según el modo configurado ----
       // voiceMode: 'off' (siempre texto), 'voice' (siempre audio),
       // 'mirror' (responde en el mismo formato en que llegó el mensaje).
+      // Excepción: las confirmaciones de venta/cancelación SIEMPRE van en
+      // texto, sin importar el modo — traen datos importantes (dirección,
+      // teléfono, precio) que el cliente necesita poder leer y guardar, no
+      // solo escuchar una vez.
+      const isOrderConfirmation =
+        reply.includes('ORDEN DE COMPRA REGISTRADA') || reply.includes('PEDIDO CANCELADO');
       const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
       const minimaxReady = cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
       const shouldReplyWithVoice =
+        !isOrderConfirmation &&
         minimaxReady &&
         (voiceMode === 'voice' || (voiceMode === 'mirror' && isVoiceMessage));
 
