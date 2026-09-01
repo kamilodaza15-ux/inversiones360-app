@@ -23,264 +23,273 @@
 
   <div id="mainApp" style="display:none">
   <div id="updateBanner" style="display:none"></div>
-  <div class="hero">
-    <div class="hero-inner">
-      <img src="logo.png" class="logo" onerror="this.style.display='none'" />
-      <div>
-        <h1>Inversiones 360 <span>CHAT</span></h1>
-        <p class="tagline">Asistente de ventas por WhatsApp con IA</p>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <img src="logo.png" onerror="this.style.display='none'" />
+        <span class="brand-text">Inversiones 360</span>
       </div>
-      <span id="statusBadge" class="badge stopped">Detenido</span>
-    </div>
-  </div>
+      <button class="sidebar-toggle" id="sidebarToggleBtn" title="Fijar/ocultar menú">☰</button>
 
-  <div class="app">
-    <nav class="tabs">
-      <button class="tab-btn active" data-tab="inicio">🏠 Inicio</button>
-      <button class="tab-btn" data-tab="config">⚙️ Configuración</button>
-      <button class="tab-btn" data-tab="productos">🛍️ Productos</button>
-      <button class="tab-btn" data-tab="clientes">👥 Clientes</button>
-    </nav>
+      <div class="nav-item active" data-tab="inicio"><span class="nav-icon">🏠</span><span class="nav-label">Inicio</span></div>
+      <div class="nav-item" data-tab="config"><span class="nav-icon">⚙️</span><span class="nav-label">Configuración</span></div>
+      <div class="nav-item" data-tab="productos"><span class="nav-icon">🛍️</span><span class="nav-label">Productos</span></div>
+      <div class="nav-item" data-tab="chats"><span class="nav-icon">💬</span><span class="nav-label">Chats</span></div>
+      <div class="nav-item" data-tab="tableros"><span class="nav-icon">📋</span><span class="nav-label">Tableros</span></div>
 
-    <section id="tab-inicio" class="tab-content active">
-      <div class="card center">
-        <button id="startBtn" class="start-btn">▶ Iniciar asistente</button>
-        <button id="logoutBtn" class="cancel-btn" style="margin-left:10px">🔌 Cerrar sesión de WhatsApp</button>
-        <button id="quitAppBtn" class="cancel-btn" style="margin-left:10px">🛑 Cerrar bot completamente</button>
-        <button id="restartAppBtn" class="cancel-btn" style="margin-left:10px">🔄 Reiniciar app</button>
-        <p id="qrHint" class="hint">Presiona "Iniciar" y escanea el QR que aparecerá aquí con WhatsApp Business.</p>
-        <p class="hint small">"Cerrar sesión de WhatsApp" solo desvincula el número (pide QR de nuevo). "Cerrar bot completamente" apaga la app entera — deja de responder mensajes hasta que la vuelvas a abrir.</p>
-        <img id="qrImage" class="qr-img" style="display:none" />
-        <div id="log" class="log"></div>
+      <div class="sidebar-footer">
+        <button class="theme-toggle-btn" id="themeToggleBtn">
+          <span class="nav-icon" id="themeIcon">🌙</span><span class="nav-label" id="themeLabel">Modo oscuro</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <div class="status-bar">
+        <span id="statusBadge" class="badge stopped">Detenido</span>
       </div>
 
-      <div class="card center" id="networkAccessCard" style="display:none">
-        <h2>📱 Abrir este panel desde tu celular u otra PC</h2>
-        <p class="hint small">Debe estar conectado a la <b>misma red WiFi</b> que esta PC. No es una copia — cualquier cambio que hagas ahí se guarda aquí mismo.</p>
-        <img id="networkQrImage" class="qr-img" style="display:none" />
-        <p class="hint" id="networkUrlText" style="user-select:all"></p>
-        <details style="margin-top:10px;text-align:left">
-          <summary class="hint small" style="cursor:pointer">¿No carga desde el otro dispositivo? Prueba esto</summary>
-          <div style="margin-top:8px;padding:12px;background:#f3f4f6;border-radius:8px">
-            <p class="hint small">A veces el Firewall de Windows bloquea el acceso desde otros dispositivos. Corre esto UNA sola vez: abre PowerShell <b>como administrador</b> en esta PC, pega este comando y presiona Enter:</p>
-            <code id="firewallCommand" style="display:block;background:#fff;padding:8px;border-radius:6px;margin:8px 0;word-break:break-all;user-select:all"></code>
-            <button id="copyFirewallCmdBtn" class="cancel-btn">📋 Copiar comando</button>
-          </div>
-        </details>
-      </div>
-    </section>
-
-    <section id="tab-config" class="tab-content">
-      <div class="card">
-        <h2>Empresa y asistente</h2>
-        <label>Nombre de la asistente</label>
-        <input id="cfg-assistantName" type="text" />
-
-        <label>Nombre de la empresa</label>
-        <input id="cfg-companyName" type="text" />
-
-        <label>Mensaje de bienvenida</label>
-        <textarea id="cfg-welcomeMessage" rows="3"></textarea>
-
-        <label>Instrucciones de personalidad / venta</label>
-        <textarea id="cfg-baseInstructions" rows="5"></textarea>
-
-        <label>Segundos de espera antes de responder</label>
-        <input id="cfg-responseDelaySeconds" type="number" min="0" max="60" />
-
-        <label>Tu número de WhatsApp (para recibir aviso de cada venta)</label>
-        <input id="cfg-notificationPhoneNumber" type="text" placeholder="573001234567 (con código de país, sin + ni espacios)" />
-        <p class="hint small">Cuando la IA cierre una venta (usando la frase "ORDEN DE COMPRA REGISTRADA"), te llega un mensaje aquí con los datos. Déjalo vacío para no recibir avisos.</p>
-
-        <label>Minutos que se pausa el bot cuando intervienes en un chat</label>
-        <input id="cfg-pauseDurationMinutes" type="number" min="1" max="1440" placeholder="10" />
-        <p class="hint small">Si escribes manualmente en un chat (desde tu celular o desde la pestaña Clientes), el bot deja de responder ahí por este tiempo. Puedes reanudarlo antes desde la pestaña Clientes.</p>
-
-        <h2>Proveedor de IA</h2>
-        <label>Proveedor</label>
-        <select id="cfg-aiProvider">
-          <option value="groq">Groq (gratis / rápido)</option>
-          <option value="openai">OpenAI</option>
-        </select>
-
-        <label>Groq API Key</label>
-        <input id="cfg-groqApiKey" type="text" placeholder="gsk_..." />
-        <p class="hint small">¿No tienes clave de Groq? <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Consíguela gratis aquí</a> (Groq → API Keys → Create API Key).</p>
-        <label>Modelo de Groq</label>
-        <select id="cfg-groqModel">
-          <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (recomendado: rápido y barato)</option>
-          <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (más potente, mismo límite diario que el de arriba)</option>
-          <option value="qwen/qwen3.8-27b">qwen/qwen3.8-27b (mejor como respaldo: 10x más límite diario)</option>
-          <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b</option>
-          <option value="__custom__">Otro (escribir manualmente)...</option>
-        </select>
-        <p class="hint small">
-          <b>gpt-oss-20b</b> (uso diario) y <b>gpt-oss-120b</b> (respuestas más elaboradas, mismo límite) son modelos de "Producción" de Groq — estables para negocio real.
-          <b>qwen3.6/3.8-27b</b> son modelos "Preview" (evaluación) — Groq los puede apagar sin aviso, como pasó antes con otros modelos. Úsalos solo como plan B si te quedas sin cupo del día (qwen3.8-27b tiene 10x más límite diario), no como modelo principal.
-          Revisa tus límites actuales en <a href="https://console.groq.com/settings/limits" target="_blank" rel="noopener">console.groq.com/settings/limits</a>.
-        </p>
-        <input id="cfg-groqModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
-
-        <label>OpenAI API Key</label>
-        <input id="cfg-openaiApiKey" type="text" placeholder="sk-..." />
-        <p class="hint small">¿No tienes clave de OpenAI? <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Consíguela aquí</a> (requiere cuenta con saldo cargado).</p>
-        <label>Modelo de OpenAI</label>
-        <select id="cfg-openaiModel">
-          <option value="gpt-5.4-mini">gpt-5.4-mini (recomendado: rápido y barato)</option>
-          <option value="gpt-5.4">gpt-5.4 (más potente, más caro)</option>
-          <option value="gpt-5.4-nano">gpt-5.4-nano (el más económico)</option>
-          <option value="__custom__">Otro (escribir manualmente)...</option>
-        </select>
-        <input id="cfg-openaiModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
-
-        <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
-        <span id="configSaved" class="saved-msg"></span>
-      </div>
-
-      <div class="card">
-        <h2>Voz del bot (clonación con MiniMax)</h2>
-        <p class="hint small">
-          A diferencia de Groq, <b>MiniMax no es gratis</b> — cobra por clonar la voz y por cada audio que genera después.
-          Si no configuras esto (o lo dejas apagado), el bot responde en texto normal, como siempre.
-        </p>
-
-        <label>MiniMax API Key</label>
-        <input id="cfg-minimaxApiKey" type="text" placeholder="tu API key de MiniMax" />
-        <label>MiniMax Group ID</label>
-        <input id="cfg-minimaxGroupId" type="text" placeholder="tu Group ID de MiniMax" />
-        <p class="hint small">Ambos los encuentras en tu cuenta de <a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> → API Keys.</p>
-
-        <label>Muestra de voz para clonar (mínimo 30 segundos)</label>
-        <input id="voice-sample" type="file" accept="audio/*" />
-        <button id="cloneVoiceBtn" class="save-btn" style="margin-top:8px">🎙️ Clonar voz</button>
-        <p id="voiceCloneStatus" class="hint small" style="margin-top:8px"></p>
-
-        <button id="listVoicesBtn" class="cancel-btn" style="margin-top:8px">🎧 Ver mis voces clonadas</button>
-        <div id="voiceList" style="margin-top:10px"></div>
-
-        <label style="margin-top:14px">Probar la voz seleccionada (solo la escuchas aquí, no se envía a ningún cliente)</label>
-        <textarea id="voice-preview-text" rows="2">Bienvenido a Inversiones 360, soy la asistente virtual. ¿En qué te puedo ayudar hoy?</textarea>
-        <button id="previewVoiceBtn" class="cancel-btn" style="margin-top:8px">▶ Probar voz</button>
-        <p id="voicePreviewStatus" class="hint small" style="margin-top:8px"></p>
-        <audio id="voicePreviewAudio" controls style="display:none;margin-top:8px;width:100%"></audio>
-
-        <label style="margin-top:14px">¿Cómo debe responder el bot a los clientes?</label>
-        <select id="cfg-voiceMode">
-          <option value="off">🔇 Apagado — siempre responde en texto</option>
-          <option value="voice">🔊 Siempre con voz clonada</option>
-          <option value="mirror">🪞 Modo espejo — si el cliente manda audio, responde audio; si escribe, responde texto</option>
-        </select>
-
-        <button id="saveVoiceConfigBtn" class="save-btn" style="margin-top:14px">Guardar configuración de voz</button>
-        <span id="voiceConfigSaved" class="saved-msg"></span>
-      </div>
-
-      <div class="card">
-        <h2>Respaldo (mover productos y configuración a otra PC)</h2>
-        <p class="hint small">Útil si usas la app en más de un equipo (ej. portátil y computador de mesa) sin tenerlos prendidos al mismo tiempo. No incluye la licencia (queda atada a cada máquina) ni la conexión de WhatsApp (escanea el QR de nuevo en cada equipo).</p>
-
-        <button id="exportBackupBtn" class="save-btn">📦 Exportar respaldo</button>
-        <p id="exportBackupStatus" class="hint small" style="margin-top:8px"></p>
-
-        <label style="margin-top:14px">Importar respaldo (.zip)</label>
-        <input id="import-backup-file" type="file" accept=".zip" />
-        <button id="importBackupBtn" class="cancel-btn" style="margin-top:8px">📥 Importar respaldo</button>
-        <p id="importBackupStatus" class="hint small" style="margin-top:8px"></p>
-      </div>
-
-      <div class="card">
-        <h2>Actualizaciones</h2>
-        <p class="hint">Versión instalada: <b id="currentVersionLabel">...</b></p>
-        <button id="checkUpdateBtn" class="save-btn">🔄 Buscar actualizaciones</button>
-        <div id="updateResult" style="margin-top:14px"></div>
-      </div>
-    </section>
-
-    <section id="tab-productos" class="tab-content">
-      <div class="card">
-        <h2 id="formTitle">Agregar producto</h2>
-        <form id="productForm">
-          <input type="hidden" id="p-id" />
-          <label>Nombre del producto</label>
-          <input id="p-name" type="text" required />
-
-          <div class="price-row">
-            <div>
-              <label>Precio antes (opcional, para mostrar descuento)</label>
-              <input id="p-priceBefore" type="text" placeholder="$129.900 COP" />
-            </div>
-            <div>
-              <label>Precio actual</label>
-              <input id="p-priceAfter" type="text" placeholder="$99.900 COP" />
-            </div>
+      <section id="tab-inicio" class="tab-content active">
+        <div class="main-scroll"><div class="inner-narrow">
+          <div class="card center">
+            <button id="startBtn" class="start-btn">▶ Iniciar asistente</button>
+            <button id="logoutBtn" class="cancel-btn" style="margin-left:10px">🔌 Cerrar sesión de WhatsApp</button>
+            <button id="quitAppBtn" class="cancel-btn" style="margin-left:10px">🛑 Cerrar bot completamente</button>
+            <button id="restartAppBtn" class="cancel-btn" style="margin-left:10px">🔄 Reiniciar app</button>
+            <p id="qrHint" class="hint">Presiona "Iniciar" y escanea el QR que aparecerá aquí con WhatsApp Business.</p>
+            <p class="hint small">"Cerrar sesión de WhatsApp" solo desvincula el número (pide QR de nuevo). "Cerrar bot completamente" apaga la app entera — deja de responder mensajes hasta que la vuelvas a abrir.</p>
+            <img id="qrImage" class="qr-img" style="display:none" />
+            <div id="log" class="log"></div>
           </div>
 
-          <label>Palabras clave (separadas por coma)</label>
-          <input id="p-keywords" type="text" placeholder="magnesio, calambres, dormir" />
-
-          <label>Detalle completo (para que la IA venda bien este producto)</label>
-          <textarea id="p-details" rows="6"></textarea>
-
-          <label>Imágenes del producto (puedes elegir varias)</label>
-          <input id="p-images" type="file" accept="image/*" multiple />
-          <p class="hint small">Si el cliente pide "fotos" o "más imágenes", Ángela envía todas las que subas aquí.</p>
-
-          <label>Video del producto (opcional, uno solo)</label>
-          <input id="p-video" type="file" accept="video/*" />
-          <p class="hint small" id="p-video-current"></p>
-          <p class="hint small">Si el cliente pide "video" o "cómo funciona", Ángela lo envía. Usa clips cortos (máx. ~50 MB) para que se envíe rápido por WhatsApp.</p>
-
-          <button type="submit" class="save-btn">Guardar producto</button>
-          <button type="button" id="cancelEditBtn" class="cancel-btn" style="display:none">Cancelar edición</button>
-        </form>
-      </div>
-
-      <div class="card">
-        <h2>Productos cargados</h2>
-        <div id="productList" class="product-list"></div>
-      </div>
-    </section>
-
-    <section id="tab-clientes" class="tab-content">
-      <div class="card" style="padding-bottom:10px">
-        <div style="display:flex;gap:10px">
-          <button id="crmViewTablerosBtn" class="save-btn" style="flex:none">📋 Tableros</button>
-          <button id="crmViewChatsBtn" class="cancel-btn" style="flex:none">💬 Chats</button>
-          <button id="refreshClientsBtn" class="cancel-btn" style="flex:none;margin-left:auto">🔄 Actualizar</button>
-        </div>
-      </div>
-
-      <div id="crmTablerosView" class="card">
-        <h2 style="margin-top:0">Tablero de clientes</h2>
-        <div id="crmBoardColumns" style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;min-height:400px"></div>
-      </div>
-
-      <div id="crmChatsView" class="card" style="display:none;padding:0;overflow:hidden">
-        <div style="display:flex;gap:0;height:calc(100vh - 260px);min-height:480px">
-          <div style="width:260px;flex-shrink:0;overflow-y:auto;border-right:1px solid #e5e7eb;padding:16px">
-            <div id="clientList"></div>
+          <div class="card center" id="networkAccessCard" style="display:none">
+            <h2>📱 Abrir este panel desde tu celular u otra PC</h2>
+            <p class="hint small">Debe estar conectado a la <b>misma red WiFi</b> que esta PC. No es una copia — cualquier cambio que hagas ahí se guarda aquí mismo.</p>
+            <img id="networkQrImage" class="qr-img" style="display:none" />
+            <p class="hint" id="networkUrlText" style="user-select:all"></p>
+            <details style="margin-top:10px;text-align:left">
+              <summary class="hint small" style="cursor:pointer">¿No carga desde el otro dispositivo? Prueba esto</summary>
+              <div style="margin-top:8px;padding:12px;background:var(--bg-hover);border-radius:8px">
+                <p class="hint small">A veces el Firewall de Windows bloquea el acceso desde otros dispositivos. Corre esto UNA sola vez: abre PowerShell <b>como administrador</b> en esta PC, pega este comando y presiona Enter:</p>
+                <code id="firewallCommand" style="display:block;background:var(--bg-input);padding:8px;border-radius:6px;margin:8px 0;word-break:break-all;user-select:all"></code>
+                <button id="copyFirewallCmdBtn" class="cancel-btn">📋 Copiar comando</button>
+              </div>
+            </details>
           </div>
-          <div style="flex:1;display:flex;flex-direction:column;min-width:0;padding:16px">
-            <div id="chatHeader" class="hint" style="padding-bottom:8px;border-bottom:1px solid #e5e7eb">Selecciona un cliente de la lista →</div>
-            <div id="chatMessages" style="flex:1;overflow-y:auto;padding:10px 4px;display:flex;flex-direction:column;gap:6px"></div>
+        </div></div>
+      </section>
 
-            <div id="pauseBar" style="display:none;padding:8px 0;border-top:1px solid #e5e7eb;font-size:13px"></div>
+      <section id="tab-config" class="tab-content">
+        <div class="main-scroll"><div class="inner-narrow">
+          <div class="card">
+            <h2>Empresa y asistente</h2>
+            <label>Nombre de la asistente</label>
+            <input id="cfg-assistantName" type="text" />
 
-            <div style="display:flex;gap:8px;padding-top:8px;border-top:1px solid #e5e7eb;align-items:center">
-              <input id="chatReplyInput" type="text" placeholder="Escribe un mensaje como si fueras tú..." style="flex:1" />
-              <label class="cancel-btn" style="margin:0;cursor:pointer" title="Enviar imagen o audio">
+            <label>Nombre de la empresa</label>
+            <input id="cfg-companyName" type="text" />
+
+            <label>Mensaje de bienvenida</label>
+            <textarea id="cfg-welcomeMessage" rows="3"></textarea>
+
+            <label>Instrucciones de personalidad / venta</label>
+            <textarea id="cfg-baseInstructions" rows="5"></textarea>
+
+            <label>Segundos de espera antes de responder</label>
+            <input id="cfg-responseDelaySeconds" type="number" min="0" max="60" />
+
+            <label>Tu número de WhatsApp (para recibir aviso de cada venta)</label>
+            <input id="cfg-notificationPhoneNumber" type="text" placeholder="573001234567 (con código de país, sin + ni espacios)" />
+            <p class="hint small">Cuando la IA cierre una venta (usando la frase "ORDEN DE COMPRA REGISTRADA"), te llega un mensaje aquí con los datos. Déjalo vacío para no recibir avisos.</p>
+
+            <label>Minutos que se pausa el bot cuando intervienes en un chat</label>
+            <input id="cfg-pauseDurationMinutes" type="number" min="1" max="1440" placeholder="10" />
+            <p class="hint small">Si escribes manualmente en un chat (desde tu celular o desde la pestaña Chats), el bot deja de responder ahí por este tiempo. Puedes reanudarlo antes desde la pestaña Chats.</p>
+
+            <h2>Proveedor de IA</h2>
+            <label>Proveedor</label>
+            <select id="cfg-aiProvider">
+              <option value="groq">Groq (gratis / rápido)</option>
+              <option value="openai">OpenAI</option>
+            </select>
+
+            <label>Groq API Key</label>
+            <input id="cfg-groqApiKey" type="text" placeholder="gsk_..." />
+            <p class="hint small">¿No tienes clave de Groq? <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Consíguela gratis aquí</a> (Groq → API Keys → Create API Key).</p>
+            <label>Modelo de Groq</label>
+            <select id="cfg-groqModel">
+              <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (recomendado: rápido y barato)</option>
+              <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (más potente, mismo límite diario que el de arriba)</option>
+              <option value="qwen/qwen3.8-27b">qwen/qwen3.8-27b (mejor como respaldo: 10x más límite diario)</option>
+              <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b</option>
+              <option value="__custom__">Otro (escribir manualmente)...</option>
+            </select>
+            <p class="hint small">
+              <b>gpt-oss-20b</b> (uso diario) y <b>gpt-oss-120b</b> (respuestas más elaboradas, mismo límite) son modelos de "Producción" de Groq — estables para negocio real.
+              <b>qwen3.6/3.8-27b</b> son modelos "Preview" (evaluación) — Groq los puede apagar sin aviso, como pasó antes con otros modelos. Úsalos solo como plan B si te quedas sin cupo del día (qwen3.8-27b tiene 10x más límite diario), no como modelo principal.
+              Revisa tus límites actuales en <a href="https://console.groq.com/settings/limits" target="_blank" rel="noopener">console.groq.com/settings/limits</a>.
+            </p>
+            <input id="cfg-groqModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
+
+            <label>OpenAI API Key</label>
+            <input id="cfg-openaiApiKey" type="text" placeholder="sk-..." />
+            <p class="hint small">¿No tienes clave de OpenAI? <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Consíguela aquí</a> (requiere cuenta con saldo cargado).</p>
+            <label>Modelo de OpenAI</label>
+            <select id="cfg-openaiModel">
+              <option value="gpt-5.4-mini">gpt-5.4-mini (recomendado: rápido y barato)</option>
+              <option value="gpt-5.4">gpt-5.4 (más potente, más caro)</option>
+              <option value="gpt-5.4-nano">gpt-5.4-nano (el más económico)</option>
+              <option value="__custom__">Otro (escribir manualmente)...</option>
+            </select>
+            <input id="cfg-openaiModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
+
+            <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
+            <span id="configSaved" class="saved-msg"></span>
+          </div>
+
+          <div class="card">
+            <h2>Voz del bot (clonación con MiniMax)</h2>
+            <p class="hint small">
+              A diferencia de Groq, <b>MiniMax no es gratis</b> — cobra por clonar la voz y por cada audio que genera después.
+              Si no configuras esto (o lo dejas apagado), el bot responde en texto normal, como siempre.
+            </p>
+
+            <label>MiniMax API Key</label>
+            <input id="cfg-minimaxApiKey" type="text" placeholder="tu API key de MiniMax" />
+            <label>MiniMax Group ID</label>
+            <input id="cfg-minimaxGroupId" type="text" placeholder="tu Group ID de MiniMax" />
+            <p class="hint small">Ambos los encuentras en tu cuenta de <a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> → API Keys.</p>
+
+            <label>Muestra de voz para clonar (mínimo 30 segundos)</label>
+            <input id="voice-sample" type="file" accept="audio/*" />
+            <button id="cloneVoiceBtn" class="save-btn" style="margin-top:8px">🎙️ Clonar voz</button>
+            <p id="voiceCloneStatus" class="hint small" style="margin-top:8px"></p>
+
+            <button id="listVoicesBtn" class="cancel-btn" style="margin-top:8px">🎧 Ver mis voces clonadas</button>
+            <div id="voiceList" style="margin-top:10px"></div>
+
+            <label style="margin-top:14px">Probar la voz seleccionada (solo la escuchas aquí, no se envía a ningún cliente)</label>
+            <textarea id="voice-preview-text" rows="2">Bienvenido a Inversiones 360, soy la asistente virtual. ¿En qué te puedo ayudar hoy?</textarea>
+            <button id="previewVoiceBtn" class="cancel-btn" style="margin-top:8px">▶ Probar voz</button>
+            <p id="voicePreviewStatus" class="hint small" style="margin-top:8px"></p>
+            <audio id="voicePreviewAudio" controls style="display:none;margin-top:8px;width:100%"></audio>
+
+            <label style="margin-top:14px">¿Cómo debe responder el bot a los clientes?</label>
+            <select id="cfg-voiceMode">
+              <option value="off">🔇 Apagado — siempre responde en texto</option>
+              <option value="voice">🔊 Siempre con voz clonada</option>
+              <option value="mirror">🪞 Modo espejo — si el cliente manda audio, responde audio; si escribe, responde texto</option>
+            </select>
+
+            <button id="saveVoiceConfigBtn" class="save-btn" style="margin-top:14px">Guardar configuración de voz</button>
+            <span id="voiceConfigSaved" class="saved-msg"></span>
+          </div>
+
+          <div class="card">
+            <h2>Respaldo (mover productos y configuración a otra PC)</h2>
+            <p class="hint small">Útil si usas la app en más de un equipo (ej. portátil y computador de mesa) sin tenerlos prendidos al mismo tiempo. No incluye la licencia (queda atada a cada máquina) ni la conexión de WhatsApp (escanea el QR de nuevo en cada equipo).</p>
+
+            <button id="exportBackupBtn" class="save-btn">📦 Exportar respaldo</button>
+            <p id="exportBackupStatus" class="hint small" style="margin-top:8px"></p>
+
+            <label style="margin-top:14px">Importar respaldo (.zip)</label>
+            <input id="import-backup-file" type="file" accept=".zip" />
+            <button id="importBackupBtn" class="cancel-btn" style="margin-top:8px">📥 Importar respaldo</button>
+            <p id="importBackupStatus" class="hint small" style="margin-top:8px"></p>
+          </div>
+
+          <div class="card">
+            <h2>Actualizaciones</h2>
+            <p class="hint">Versión instalada: <b id="currentVersionLabel">...</b></p>
+            <button id="checkUpdateBtn" class="save-btn">🔄 Buscar actualizaciones</button>
+            <div id="updateResult" style="margin-top:14px"></div>
+          </div>
+        </div></div>
+      </section>
+
+      <section id="tab-productos" class="tab-content">
+        <div class="main-scroll"><div class="inner-narrow">
+          <div class="card">
+            <h2 id="formTitle">Agregar producto</h2>
+            <form id="productForm">
+              <input type="hidden" id="p-id" />
+              <label>Nombre del producto</label>
+              <input id="p-name" type="text" required />
+
+              <div class="price-row">
+                <div>
+                  <label>Precio antes (opcional, para mostrar descuento)</label>
+                  <input id="p-priceBefore" type="text" placeholder="$129.900 COP" />
+                </div>
+                <div>
+                  <label>Precio actual</label>
+                  <input id="p-priceAfter" type="text" placeholder="$99.900 COP" />
+                </div>
+              </div>
+
+              <label>Palabras clave (separadas por coma)</label>
+              <input id="p-keywords" type="text" placeholder="magnesio, calambres, dormir" />
+
+              <label>Detalle completo (para que la IA venda bien este producto)</label>
+              <textarea id="p-details" rows="6"></textarea>
+
+              <label>Imágenes del producto (puedes elegir varias)</label>
+              <input id="p-images" type="file" accept="image/*" multiple />
+              <p class="hint small">Si el cliente pide "fotos" o "más imágenes", Ángela envía todas las que subas aquí.</p>
+
+              <label>Video del producto (opcional, uno solo)</label>
+              <input id="p-video" type="file" accept="video/*" />
+              <p class="hint small" id="p-video-current"></p>
+              <p class="hint small">Si el cliente pide "video" o "cómo funciona", Ángela lo envía. Usa clips cortos (máx. ~50 MB) para que se envíe rápido por WhatsApp.</p>
+
+              <button type="submit" class="save-btn">Guardar producto</button>
+              <button type="button" id="cancelEditBtn" class="cancel-btn" style="display:none">Cancelar edición</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <h2>Productos cargados</h2>
+            <div id="productList" class="product-list"></div>
+          </div>
+        </div></div>
+      </section>
+
+      <section id="tab-chats" class="tab-content">
+        <div class="chats-layout">
+          <div class="chats-sidebar">
+            <button id="refreshClientsBtn" class="cancel-btn" style="width:100%;margin-top:0">🔄 Actualizar</button>
+            <div id="clientList" style="margin-top:12px"></div>
+          </div>
+          <div class="chats-main">
+            <div id="chatHeader" class="chat-header">Selecciona un cliente de la lista →</div>
+            <div id="chatMessages" class="chat-messages"></div>
+            <div id="pauseBar" class="pause-bar" style="display:none"></div>
+            <div class="chat-input-row">
+              <input id="chatReplyInput" type="text" placeholder="Escribe un mensaje como si fueras tú..." />
+              <label class="attach-label" title="Enviar imagen o audio">
                 📎
                 <input id="chatMediaInput" type="file" accept="image/*,audio/*" style="display:none" />
               </label>
-              <button id="chatSendBtn" class="save-btn">Enviar</button>
+              <button id="chatSendBtn" class="save-btn" style="margin-top:0">Enviar</button>
             </div>
             <p class="hint small" style="margin-top:6px">Al enviar desde aquí, el bot se pausa automáticamente para este cliente (igual que si le escribieras desde tu celular).</p>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <footer class="dev-credit">Desarrollado por Juan Camilo Ramírez</footer>
+      <section id="tab-tableros" class="tab-content">
+        <div style="padding:20px;height:100%;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;margin-bottom:12px">
+            <h2 style="margin:0">Tablero de clientes</h2>
+            <button id="refreshBoardBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">🔄 Actualizar</button>
+          </div>
+          <div id="crmBoardColumns" class="board-columns"></div>
+        </div>
+      </section>
+
+      <footer class="dev-credit">Desarrollado por Juan Camilo Ramírez</footer>
+    </div>
   </div>
   </div>
 
