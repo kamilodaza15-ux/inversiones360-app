@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.17.1';
+const CURRENT_VERSION = '1.18.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -44,6 +44,9 @@ const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
 const LICENSE_PATH = path.join(DATA_DIR, 'license.json');
 const VALID_KEYS_PATH = path.join(DATA_DIR, 'valid-keys.json');
 const CONVERSATIONS_PATH = path.join(DATA_DIR, 'conversations.json');
+const CLIENTS_PATH = path.join(DATA_DIR, 'clients.json');
+const CHAT_LOGS_PATH = path.join(DATA_DIR, 'chat-logs.json');
+const PAUSED_CHATS_PATH = path.join(DATA_DIR, 'paused-chats.json');
 const SESSION_DIR = path.join(__dirname, 'session');
 
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -507,6 +510,56 @@ app.delete('/api/products/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- API: CRM (clientes, chat en vivo, pausas) ----------
+app.get('/api/clients', (req, res) => {
+  const list = Array.from(clients.entries()).map(([jid, rec]) => ({
+    jid,
+    ...rec,
+    pausedUntil: pausedChats.get(jid) || null,
+  }));
+  list.sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
+  res.json(list);
+});
+
+app.get('/api/clients/:jid/messages', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  res.json(chatLogs.get(jid) || []);
+});
+
+app.post('/api/clients/:jid/send', async (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const text = (req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Escribe un mensaje' });
+  if (!sock) return res.status(400).json({ error: 'El bot no está conectado a WhatsApp' });
+  try {
+    // Se manda igual que si fuera el bot (queda registrado como propio, no
+    // dispara la pausa), pero lo marcamos como "owner" en el historial del
+    // panel para que se vea claro quién lo escribió.
+    await sendAndTrack(jid, { text });
+    ensureClientRecord(jid);
+    appendChatLog(jid, { from: 'owner', text, type: 'text', timestamp: Date.now() });
+    const cfgNow = readConfig();
+    const minutes = Number(cfgNow.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
+    pauseChat(jid, minutes);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo enviar: ' + err.message });
+  }
+});
+
+app.post('/api/clients/:jid/pause', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const minutes = Number(req.body.minutes) || DEFAULT_PAUSE_MINUTES;
+  const until = pauseChat(jid, minutes);
+  res.json({ ok: true, pausedUntil: until });
+});
+
+app.post('/api/clients/:jid/resume', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  resumeChat(jid);
+  res.json({ ok: true });
+});
+
 // ---------- IA: helpers de proveedor ----------
 function getGroqClient(cfg) {
   const Groq = require('groq-sdk');
@@ -582,7 +635,7 @@ async function sendProductImages(userId, product) {
   for (const imgRelPath of product.images) {
     const imgPath = path.join(__dirname, imgRelPath.replace(/^\//, ''));
     if (fs.existsSync(imgPath)) {
-      await sock.sendMessage(userId, { image: fs.readFileSync(imgPath) });
+      await sendAndTrack(userId, { image: fs.readFileSync(imgPath) });
     }
   }
   return true;
@@ -596,7 +649,7 @@ async function sendProductVideo(userId, product) {
   if (!fs.existsSync(videoPath)) {
     return false;
   }
-  await sock.sendMessage(userId, { video: fs.readFileSync(videoPath) });
+  await sendAndTrack(userId, { video: fs.readFileSync(videoPath) });
   return true;
 }
 
@@ -773,7 +826,7 @@ async function sendVoiceReply(userId, text) {
     const oggBuffer = fs.readFileSync(oggPath);
     // ptt: true hace que llegue como nota de voz (con el ícono de
     // micrófono), no como un archivo de audio adjunto normal.
-    await sock.sendMessage(userId, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+    await sendAndTrack(userId, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
   } finally {
     fs.unlink(mp3Path, () => {});
     fs.unlink(oggPath, () => {});
@@ -844,7 +897,7 @@ async function notifyOwner(cfg, clientUserId, headerLine, reply) {
     : `📱 Cliente: no se pudo identificar el número real (revisa el teléfono que dio en el pedido, si aplica).`;
 
   const notification = `${headerLine}\n${chatLine}\n\n${reply}`;
-  await sock.sendMessage(ownerJid, { text: notification });
+  await sendAndTrack(ownerJid, { text: notification });
 }
 
 async function notifyOwnerOfSale(cfg, clientUserId, reply) {
@@ -1015,6 +1068,148 @@ function saveConversations() {
 
 loadConversations();
 
+// ---- CRM: clientes, historial de chat, y pausas por conversación ----
+let clients = new Map(); // jid -> { phone, name, status, lastMessageAt, createdAt, lastOrderSummary }
+let chatLogs = new Map(); // jid -> [{ from: 'client'|'bot'|'owner', text, type, timestamp }]
+let pausedChats = new Map(); // jid -> timestamp hasta cuándo queda pausado
+
+const DEFAULT_PAUSE_MINUTES = 10;
+const MAX_CHAT_LOG_PER_CLIENT = 300;
+
+function loadCrmData() {
+  if (fs.existsSync(CLIENTS_PATH)) {
+    try {
+      clients = new Map(Object.entries(JSON.parse(fs.readFileSync(CLIENTS_PATH, 'utf8'))));
+    } catch (e) {
+      console.error('No se pudo cargar clients.json:', e);
+    }
+  }
+  if (fs.existsSync(CHAT_LOGS_PATH)) {
+    try {
+      chatLogs = new Map(Object.entries(JSON.parse(fs.readFileSync(CHAT_LOGS_PATH, 'utf8'))));
+    } catch (e) {
+      console.error('No se pudo cargar chat-logs.json:', e);
+    }
+  }
+  if (fs.existsSync(PAUSED_CHATS_PATH)) {
+    try {
+      pausedChats = new Map(Object.entries(JSON.parse(fs.readFileSync(PAUSED_CHATS_PATH, 'utf8'))));
+    } catch (e) {
+      console.error('No se pudo cargar paused-chats.json:', e);
+    }
+  }
+}
+loadCrmData();
+
+function saveClients() {
+  fs.writeFile(CLIENTS_PATH, JSON.stringify(Object.fromEntries(clients), null, 2), (err) => {
+    if (err) console.error('Error guardando clients.json:', err);
+  });
+}
+function saveChatLogs() {
+  fs.writeFile(CHAT_LOGS_PATH, JSON.stringify(Object.fromEntries(chatLogs), null, 2), (err) => {
+    if (err) console.error('Error guardando chat-logs.json:', err);
+  });
+}
+function savePausedChats() {
+  fs.writeFile(PAUSED_CHATS_PATH, JSON.stringify(Object.fromEntries(pausedChats), null, 2), (err) => {
+    if (err) console.error('Error guardando paused-chats.json:', err);
+  });
+}
+
+function ensureClientRecord(jid) {
+  if (!clients.has(jid)) {
+    clients.set(jid, {
+      phone: jid.split('@')[0],
+      name: '',
+      status: 'interesado',
+      lastMessageAt: Date.now(),
+      createdAt: Date.now(),
+    });
+  } else {
+    clients.get(jid).lastMessageAt = Date.now();
+  }
+  saveClients();
+  io.emit('clientUpdate', { jid, client: clients.get(jid) });
+}
+
+function updateClientStatus(jid, status, extra) {
+  const rec = clients.get(jid) || {
+    phone: jid.split('@')[0],
+    name: '',
+    createdAt: Date.now(),
+  };
+  Object.assign(rec, { status, lastMessageAt: Date.now() }, extra || {});
+  clients.set(jid, rec);
+  saveClients();
+  io.emit('clientUpdate', { jid, client: rec });
+}
+
+function appendChatLog(jid, entry) {
+  if (!chatLogs.has(jid)) chatLogs.set(jid, []);
+  const log = chatLogs.get(jid);
+  log.push(entry);
+  if (log.length > MAX_CHAT_LOG_PER_CLIENT) {
+    log.splice(0, log.length - MAX_CHAT_LOG_PER_CLIENT);
+  }
+  saveChatLogs();
+  io.emit('chatMessage', { jid, entry });
+}
+
+function isPaused(jid) {
+  const until = pausedChats.get(jid);
+  if (!until) return false;
+  if (Date.now() > until) {
+    pausedChats.delete(jid);
+    savePausedChats();
+    io.emit('pauseUpdate', { jid, pausedUntil: null });
+    return false;
+  }
+  return true;
+}
+
+function pauseChat(jid, minutes) {
+  const base = Math.max(pausedChats.get(jid) || 0, Date.now());
+  const until = base + minutes * 60 * 1000;
+  pausedChats.set(jid, until);
+  savePausedChats();
+  io.emit('pauseUpdate', { jid, pausedUntil: until });
+  return until;
+}
+
+function resumeChat(jid) {
+  pausedChats.delete(jid);
+  savePausedChats();
+  io.emit('pauseUpdate', { jid, pausedUntil: null });
+}
+
+// Busca el nombre que el CLIENTE mismo escribió durante la compra (igual que
+// hacemos con el teléfono), para mostrarlo en la lista de clientes.
+function extractNameFromOrderText(text) {
+  const match = (text || '').match(/nombre[:\s]*([^\n📍🏙️📱💰🛍️]{2,60})/i);
+  return match ? match[1].trim() : null;
+}
+
+// Recuerda los IDs de los mensajes que el PROPIO bot mandó (no los del
+// cliente ni del dueño). Sirve para diferenciar, cuando llega un mensaje
+// "fromMe" de WhatsApp, si es solo el eco de algo que el bot ya envió, o si
+// es el dueño escribiendo manualmente desde su propio celular — casos muy
+// distintos que necesitan tratarse diferente (el segundo pausa el chat).
+const botSentMessageIds = new Set();
+const MAX_BOT_SENT_IDS = 500;
+
+async function sendAndTrack(jid, content, options) {
+  const result = await sock.sendMessage(jid, content, options);
+  if (result?.key?.id) {
+    botSentMessageIds.add(result.key.id);
+    if (botSentMessageIds.size > MAX_BOT_SENT_IDS) {
+      const oldest = botSentMessageIds.values().next().value;
+      botSentMessageIds.delete(oldest);
+    }
+  }
+  return result;
+}
+
 // ---- Cola de mensajes por cliente ----
 // Sin esto, si un cliente manda 2-3 mensajes seguidos muy rápido, cada uno se
 // procesa en paralelo y pueden pisarse o responderse en desorden. Con la cola,
@@ -1098,9 +1293,28 @@ async function startBot() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      if (msg.key.fromMe) continue;
       if (msg.key.remoteJid?.endsWith('@g.us')) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
+
+      if (msg.key.fromMe) {
+        const msgId = msg.key.id;
+        if (msgId && botSentMessageIds.has(msgId)) {
+          continue; // eco de un mensaje que el propio bot ya mandó, no es una intervención
+        }
+        // Llegó un mensaje "fromMe" que el bot NO mandó -> el dueño escribió
+        // manualmente desde su propio WhatsApp. Pausamos ese chat para que el
+        // bot no se cruce con lo que la persona esté diciendo.
+        const jid = msg.key.remoteJid;
+        const ownerText =
+          msg.message?.conversation || msg.message?.extendedTextMessage?.text || '(mensaje sin texto)';
+        ensureClientRecord(jid);
+        appendChatLog(jid, { from: 'owner', text: ownerText, type: 'text', timestamp: Date.now() });
+        const cfgNow = readConfig();
+        const minutes = Number(cfgNow.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
+        pauseChat(jid, minutes);
+        io.emit('log', `✋ Interviniste en ${jid.split('@')[0]} — bot pausado ${minutes} min ahí`);
+        continue;
+      }
 
       const msgId = msg.key.id;
       if (msgId) {
@@ -1145,18 +1359,33 @@ async function startBot() {
           io.emit('log', `🎙️ Transcribiendo audio de ${userId}...`);
           messageText = await transcribeAudio(buffer.toString('base64'), audioMsg.mimetype);
           if (!messageText) {
-            await sock.sendMessage(userId, { text: 'No logré entender el audio 🙏. ¿Me lo puedes escribir?' });
+            await sendAndTrack(userId, { text: 'No logré entender el audio 🙏. ¿Me lo puedes escribir?' });
             return;
           }
           io.emit('log', `🎙️ Transcripción: ${messageText}`);
         } catch (e) {
           console.error('Error transcribiendo audio:', e);
-          await sock.sendMessage(userId, { text: 'No pude procesar el audio 🙏. ¿Me lo escribes en texto?' });
+          await sendAndTrack(userId, { text: 'No pude procesar el audio 🙏. ¿Me lo escribes en texto?' });
           return;
         }
       }
 
       if (!messageText) return; // otro tipo de mensaje (sticker, ubicación, etc.) — lo ignoramos por ahora
+
+      // ---- Registrar en el CRM: se guarda SIEMPRE, esté pausado o no ----
+      ensureClientRecord(userId);
+      appendChatLog(userId, {
+        from: 'client',
+        text: messageText,
+        type: isVoiceMessage ? 'voice' : 'text',
+        timestamp: Date.now(),
+      });
+
+      // ---- Si el chat está pausado (interviniste manualmente), no respondemos automático ----
+      if (isPaused(userId)) {
+        io.emit('log', `⏸️ ${userId} está pausado, no respondo automático`);
+        return;
+      }
 
       if (!conversations.has(userId)) {
         conversations.set(userId, [{ role: 'system', content: buildSystemPrompt() }]);
@@ -1177,7 +1406,7 @@ async function startBot() {
       }
 
       if (isNewUser) {
-        await sock.sendMessage(userId, { text: cfg.welcomeMessage });
+        await sendAndTrack(userId, { text: cfg.welcomeMessage });
       }
 
       await sleep((cfg.responseDelaySeconds ?? 5) * 1000);
@@ -1229,6 +1458,7 @@ async function startBot() {
       const reply = (aiMessage.content || '').trim() || 'Listo 😊';
       history.push({ role: 'assistant', content: reply });
       saveConversations();
+      appendChatLog(userId, { from: 'bot', text: reply, type: 'text', timestamp: Date.now() });
 
       // ---- Responder con audio (voz clonada) según el modo configurado ----
       // voiceMode: 'off' (siempre texto), 'voice' (siempre audio),
@@ -1252,10 +1482,10 @@ async function startBot() {
         } catch (err) {
           console.error('Error generando audio con MiniMax, se responde en texto:', err);
           io.emit('log', `⚠️ Falló la voz (MiniMax), respondí en texto: ${err.message}`);
-          await sock.sendMessage(userId, { text: reply });
+          await sendAndTrack(userId, { text: reply });
         }
       } else {
-        await sock.sendMessage(userId, { text: reply });
+        await sendAndTrack(userId, { text: reply });
       }
 
       // ---- Si esta respuesta cerró una venta, avisar al número del dueño ----
@@ -1268,6 +1498,13 @@ async function startBot() {
           io.emit('log', `⚠️ No se pudo notificar la venta: ${err.message}`);
         }
       }
+      if (reply.includes('ORDEN DE COMPRA REGISTRADA')) {
+        const name = extractNameFromOrderText(reply);
+        updateClientStatus(userId, 'comprado', {
+          lastOrderSummary: reply,
+          ...(name ? { name } : {}),
+        });
+      }
 
       // ---- Si el cliente canceló el pedido, avisar también ----
       if (reply.includes('PEDIDO CANCELADO') && cfg.notificationPhoneNumber) {
@@ -1279,6 +1516,9 @@ async function startBot() {
           io.emit('log', `⚠️ No se pudo notificar la cancelación: ${err.message}`);
         }
       }
+      if (reply.includes('PEDIDO CANCELADO')) {
+        updateClientStatus(userId, 'cancelado', {});
+      }
 
       io.emit('log', `💬 ${userId}: ${messageText}`);
     } catch (err) {
@@ -1289,7 +1529,7 @@ async function startBot() {
         ? 'Estamos con muchos mensajes en este momento 🙏. Dame un minuto y te respondo enseguida.'
         : 'Disculpa, tuve un problema técnico 🙏. ¿Puedes repetir tu mensaje?';
       try {
-        await sock.sendMessage(msg.key.remoteJid, { text: fallbackMsg });
+        await sendAndTrack(msg.key.remoteJid, { text: fallbackMsg });
       } catch (e) {}
     }
   }

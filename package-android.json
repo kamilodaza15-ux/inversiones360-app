@@ -1,6 +1,6 @@
 {
   "name": "inversiones360-chat-android",
-  "version": "1.17.1",
+  "version": "1.18.0",
   "description": "Asistente de ventas por WhatsApp con IA (versi\u00f3n Android/Termux, sin Electron)",
   "main": "server.js",
   "type": "commonjs",
