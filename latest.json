@@ -1,6 +1,6 @@
 {
-  "version": "1.19.1",
-  "notes": "Botón para borrar por completo la conversación de un cliente (chat, memoria de la IA, y estado del CRM) — útil para hacer pruebas.",
+  "version": "1.20.0",
+  "notes": "Rediseño completo: barra lateral colapsable (como WhatsApp Web), modo oscuro/claro, Chats y Tableros separados, y tablero ampliado con etapas de logística (guía generada, en camino, con novedad, entregado, devuelto) movibles a mano.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
