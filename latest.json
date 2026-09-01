@@ -1,6 +1,6 @@
 {
-  "version": "1.17.1",
-  "notes": "FFmpeg ahora también se busca directo en el sistema (Linux/Android), no solo en rutas de Windows.",
+  "version": "1.18.0",
+  "notes": "CRM: clasificación automática de clientes (interesado/comprado/cancelado), pestaña de chat en vivo con historial, y pausa automática del bot cuando intervienes manualmente en una conversación.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
