@@ -536,11 +536,31 @@ async function selectClient(jid) {
     <b>${client?.name || client?.phone || jid.split('@')[0]}</b>
     <span style="color:${statusInfo.color}"> · ${statusInfo.label}</span>
     <a href="https://wa.me/${client?.phone}" target="_blank" style="margin-left:8px">💬 Abrir en WhatsApp</a>
+    <button id="deleteChatBtn" class="cancel-btn" style="margin-left:8px;color:#dc2626">🗑️ Borrar chat</button>
   `;
+  document.getElementById('deleteChatBtn').addEventListener('click', () => deleteSelectedChat(jid));
 
   const messages = await fetch(`/api/clients/${encodeURIComponent(jid)}/messages`).then((r) => r.json());
   renderMessages(messages);
   renderPauseBar(client?.pausedUntil);
+}
+
+async function deleteSelectedChat(jid) {
+  const client = clientsCache.find((c) => c.jid === jid);
+  const label = client?.name || client?.phone || jid.split('@')[0];
+  if (!confirm(`¿Borrar TODA la conversación con ${label}? Esto borra el chat, la memoria de la IA, y su estado en el CRM. La próxima vez que escriba, el bot lo va a tratar como cliente nuevo. No se puede deshacer.`)) {
+    return;
+  }
+  const res = await fetch(`/api/clients/${encodeURIComponent(jid)}`, { method: 'DELETE' }).then((r) => r.json());
+  if (!res.ok) {
+    alert(res.error || 'No se pudo borrar el chat');
+    return;
+  }
+  selectedClientJid = null;
+  document.getElementById('chatHeader').textContent = 'Selecciona un cliente de la lista →';
+  document.getElementById('chatMessages').innerHTML = '';
+  document.getElementById('pauseBar').style.display = 'none';
+  loadClients();
 }
 
 function renderMessages(messages) {
@@ -664,6 +684,15 @@ socket.on('clientUpdate', () => loadClients());
 socket.on('pauseUpdate', ({ jid, pausedUntil }) => {
   loadClients();
   if (jid === selectedClientJid) renderPauseBar(pausedUntil);
+});
+socket.on('clientDeleted', ({ jid }) => {
+  loadClients();
+  if (jid === selectedClientJid) {
+    selectedClientJid = null;
+    document.getElementById('chatHeader').textContent = 'Selecciona un cliente de la lista →';
+    document.getElementById('chatMessages').innerHTML = '';
+    document.getElementById('pauseBar').style.display = 'none';
+  }
 });
 
 loadClients();
