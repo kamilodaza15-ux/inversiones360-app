@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.19.0';
+const CURRENT_VERSION = '1.19.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -603,6 +603,30 @@ app.post('/api/clients/:jid/pause', (req, res) => {
 app.post('/api/clients/:jid/resume', (req, res) => {
   const jid = decodeURIComponent(req.params.jid);
   resumeChat(jid);
+  res.json({ ok: true });
+});
+
+// Borra TODO lo de un cliente (para pruebas): el chat que se ve en el panel,
+// la memoria que usa la IA para recordar la conversación, y su registro del
+// CRM. La próxima vez que ese número escriba, el bot lo trata como si fuera
+// completamente nuevo (con mensaje de bienvenida otra vez).
+app.delete('/api/clients/:jid', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+
+  chatLogs.delete(jid);
+  saveChatLogs();
+
+  conversations.delete(jid);
+  saveConversations();
+
+  clients.delete(jid);
+  saveClients();
+
+  seenUsers.delete(jid);
+  pausedChats.delete(jid);
+  savePausedChats();
+
+  io.emit('clientDeleted', { jid });
   res.json({ ok: true });
 });
 
