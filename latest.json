@@ -1,6 +1,6 @@
 {
-  "version": "1.17.0",
-  "notes": "Evita respuestas duplicadas/contradictorias, refuerza que nunca invente ni mezcle productos, las confirmaciones de venta/cancelación siempre van en texto, y el precio se lee en palabras en el audio (evita errores de lectura de números).",
+  "version": "1.17.1",
+  "notes": "FFmpeg ahora también se busca directo en el sistema (Linux/Android), no solo en rutas de Windows.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
@@ -10,5 +10,3 @@
     "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
   }
 }
-
-
