@@ -1,6 +1,6 @@
 {
-  "version": "1.16.0",
-  "notes": "Usa el teléfono real que el cliente da durante la compra para el link del chat (con indicativo 57 automático), en vez del id interno de WhatsApp que a veces no es el número real.",
+  "version": "1.17.0",
+  "notes": "Evita respuestas duplicadas/contradictorias, refuerza que nunca invente ni mezcle productos, las confirmaciones de venta/cancelación siempre van en texto, y el precio se lee en palabras en el audio (evita errores de lectura de números).",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
@@ -10,4 +10,5 @@
     "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
   }
 }
+
 
