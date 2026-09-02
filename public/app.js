@@ -443,7 +443,7 @@ document.getElementById('previewVoiceBtn').addEventListener('click', async () =>
   }
 });
 
-// ---------- Clientes (CRM: tablero ampliado + chat en vivo + pausas) ----------
+// ---------- Clientes (CRM: tablero + chat en vivo + panel derecho + pausas) ----------
 const STATUS_COLUMNS = [
   { key: 'nuevo', label: '🆕 Nuevo', color: '#64748b' },
   { key: 'conversando', label: '💬 En conversación', color: '#3b82f6' },
@@ -457,13 +457,36 @@ const STATUS_COLUMNS = [
   { key: 'cancelado', label: '❌ Cancelado', color: '#dc2626' },
 ];
 const STATUS_LABELS = Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, c]));
+const TAG_LABELS = {
+  lead: { label: '🆕 Lead', color: '#64748b' },
+  interesado: { label: '🔥 Interesado', color: '#f97316' },
+  cliente: { label: '✅ Cliente', color: '#16a34a' },
+  descartado: { label: '❌ Descartado', color: '#9ca3af' },
+};
 
 let selectedClientJid = null;
 let clientsCache = [];
+let productsCacheForRp = [];
+let activeTagFilter = 'todos';
+let activeDateFilter = 'todas';
 
 function formatTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function isWithinDateFilter(ts, filter) {
+  if (!ts || filter === 'todas') return true;
+  const d = new Date(ts);
+  const now = new Date();
+  const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  if (filter === 'hoy') return startOfDay(d) === startOfDay(now);
+  if (filter === 'ayer') {
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return startOfDay(d) === startOfDay(yesterday);
+  }
+  if (filter === '7dias') return ts >= now.getTime() - 7 * 24 * 60 * 60 * 1000;
+  return true;
 }
 
 async function loadClients() {
@@ -475,8 +498,24 @@ async function loadClients() {
 document.getElementById('refreshClientsBtn').addEventListener('click', loadClients);
 document.getElementById('refreshBoardBtn').addEventListener('click', loadClients);
 
-// ---- Vista de Tablero (columnas por etapa; las de logística se mueven a mano
-// por ahora, hasta que conectemos el seguimiento automático de envíos) ----
+document.querySelectorAll('#chatsTagFilters .filter-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#chatsTagFilters .filter-chip').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeTagFilter = btn.dataset.filterTag;
+    renderClientList();
+  });
+});
+document.querySelectorAll('#chatsDateFilters .filter-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#chatsDateFilters .filter-chip').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeDateFilter = btn.dataset.filterDate;
+    renderClientList();
+  });
+});
+
+// ---- Vista de Tablero ----
 function renderBoard() {
   const container = document.getElementById('crmBoardColumns');
   if (!container) return;
@@ -525,24 +564,30 @@ function renderBoard() {
   });
 }
 
-// ---- Vista de Chats (lista + conversación) ----
+// ---- Vista de Chats: lista con filtros ----
 function renderClientList() {
   const listDiv = document.getElementById('clientList');
   if (!listDiv) return;
   listDiv.innerHTML = '';
-  clientsCache.forEach((c) => {
-    const statusInfo = STATUS_LABELS[c.status] || { label: c.status, color: '#6b7280' };
-    const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
-    const item = document.createElement('div');
-    item.className = 'client-list-item' + (c.jid === selectedClientJid ? ' selected' : '');
-    item.innerHTML = `
-      <div class="name">${c.name || c.phone}</div>
-      <div class="meta" style="color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
-      <div class="time">${formatTime(c.lastMessageAt)}</div>
-    `;
-    item.addEventListener('click', () => selectClient(c.jid));
-    listDiv.appendChild(item);
-  });
+  clientsCache
+    .filter((c) => activeTagFilter === 'todos' || (c.tag || 'lead') === activeTagFilter)
+    .filter((c) => isWithinDateFilter(c.lastMessageAt, activeDateFilter))
+    .forEach((c) => {
+      const statusInfo = STATUS_LABELS[c.status] || { label: c.status, color: '#6b7280' };
+      const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
+      const item = document.createElement('div');
+      item.className = 'client-list-item' + (c.jid === selectedClientJid ? ' selected' : '');
+      item.innerHTML = `
+        <div class="name">${c.name || c.phone}</div>
+        <div class="meta" style="color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
+        <div class="time">${formatTime(c.lastMessageAt)}</div>
+      `;
+      item.addEventListener('click', () => {
+        selectClient(c.jid);
+        if (window.innerWidth <= 860) showMobileChatView();
+      });
+      listDiv.appendChild(item);
+    });
 }
 
 async function selectClient(jid) {
@@ -550,36 +595,13 @@ async function selectClient(jid) {
   renderClientList();
 
   const client = clientsCache.find((c) => c.jid === jid);
-  const statusInfo = STATUS_LABELS[client?.status] || { label: client?.status || '', color: '#6b7280' };
-  document.getElementById('chatHeader').innerHTML = `
-    <b>${client?.name || client?.phone || jid.split('@')[0]}</b>
-    <span style="color:${statusInfo.color}">${statusInfo.label}</span>
-    <a href="https://wa.me/${client?.phone}" target="_blank">💬 Abrir en WhatsApp</a>
-    <button id="deleteChatBtn" class="cancel-btn" style="margin:0;color:#dc2626">🗑️ Borrar chat</button>
-  `;
-  document.getElementById('deleteChatBtn').addEventListener('click', () => deleteSelectedChat(jid));
+  document.getElementById('chatHeader').innerHTML = `<b>${client?.name || client?.phone || jid.split('@')[0]}</b>`;
+
+  document.getElementById('chatsRightPanel').style.display = 'flex';
+  renderRightPanel(client);
 
   const messages = await fetch(`/api/clients/${encodeURIComponent(jid)}/messages`).then((r) => r.json());
   renderMessages(messages);
-  renderPauseBar(client?.pausedUntil);
-}
-
-async function deleteSelectedChat(jid) {
-  const client = clientsCache.find((c) => c.jid === jid);
-  const label = client?.name || client?.phone || jid.split('@')[0];
-  if (!confirm(`¿Borrar TODA la conversación con ${label}? Esto borra el chat, la memoria de la IA, y su estado en el CRM. La próxima vez que escriba, el bot lo va a tratar como cliente nuevo. No se puede deshacer.`)) {
-    return;
-  }
-  const res = await fetch(`/api/clients/${encodeURIComponent(jid)}`, { method: 'DELETE' }).then((r) => r.json());
-  if (!res.ok) {
-    alert(res.error || 'No se pudo borrar el chat');
-    return;
-  }
-  selectedClientJid = null;
-  document.getElementById('chatHeader').textContent = 'Selecciona un cliente de la lista →';
-  document.getElementById('chatMessages').innerHTML = '';
-  document.getElementById('pauseBar').style.display = 'none';
-  loadClients();
 }
 
 function renderMessages(messages) {
@@ -598,6 +620,8 @@ function appendMessageBubble(m) {
   let mediaHtml = '';
   if (m.type === 'image' && m.mediaUrl) {
     mediaHtml = `<img src="${m.mediaUrl}" />`;
+  } else if (m.type === 'video' && m.mediaUrl) {
+    mediaHtml = `<video controls src="${m.mediaUrl}" style="max-width:220px;border-radius:8px;display:block;margin-top:4px"></video>`;
   } else if ((m.type === 'audio' || m.type === 'voice') && m.mediaUrl) {
     mediaHtml = `<audio controls src="${m.mediaUrl}"></audio>`;
   }
@@ -612,45 +636,163 @@ function appendMessageBubble(m) {
   container.scrollTop = container.scrollHeight;
 }
 
-// ---- Barra de pausa: siempre visible, con botones proactivos o de reanudar ----
-function renderPauseBar(pausedUntil) {
-  const div = document.getElementById('pauseBar');
-  const isPausedNow = pausedUntil && pausedUntil > Date.now();
-  div.style.display = 'flex';
+// ---- Panel derecho: info fija + acciones con scroll ----
+async function loadProductsForRp() {
+  productsCacheForRp = await fetch('/api/products').then((r) => r.json());
+}
+loadProductsForRp();
 
+function renderRightPanel(client) {
+  if (!client) return;
+  const tag = client.tag || 'lead';
+  document.getElementById('rpName').textContent = client.name || client.phone;
+  document.getElementById('rpPhone').textContent = client.phone;
+  document.getElementById('rpTag').value = tag;
+
+  const statusSelect = document.getElementById('rpStatusSelect');
+  statusSelect.innerHTML = STATUS_COLUMNS.map(
+    (s) => `<option value="${s.key}" ${s.key === client.status ? 'selected' : ''}>${s.label}</option>`
+  ).join('');
+
+  const productSelect = document.getElementById('rpProductSelect');
+  productSelect.innerHTML =
+    '<option value="">Elegir producto...</option>' +
+    productsCacheForRp.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+
+  document.getElementById('rpWhatsappLink').href = `https://wa.me/${client.phone}`;
+
+  const isPausedNow = client.pausedUntil && client.pausedUntil > Date.now();
+  const aiStatusEl = document.getElementById('rpAiStatus');
   if (isPausedNow) {
-    const until = new Date(pausedUntil).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-    div.innerHTML = `
-      <span>⏸️ Bot pausado en este chat hasta las ${until}</span>
-      <button id="resumeNowBtn" class="cancel-btn" style="margin:0">▶ Reanudar ya</button>
-      <button id="extend10Btn" class="cancel-btn" style="margin:0">+10 min</button>
-      <button id="extend30Btn" class="cancel-btn" style="margin:0">+30 min</button>
-    `;
-    document.getElementById('resumeNowBtn').addEventListener('click', async () => {
-      await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/resume`, { method: 'POST' });
-    });
-    document.getElementById('extend10Btn').addEventListener('click', () => pauseSelected(10));
-    document.getElementById('extend30Btn').addEventListener('click', () => pauseSelected(30));
+    const remainingYears = (client.pausedUntil - Date.now()) / (365 * 24 * 60 * 60 * 1000);
+    aiStatusEl.innerHTML =
+      remainingYears > 1
+        ? '⏸️ Pausado indefinidamente <button id="rpResumeBtn" class="cancel-btn" style="margin:4px 0 0">▶ Reanudar</button>'
+        : `⏸️ Pausado hasta las ${new Date(client.pausedUntil).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} <button id="rpResumeBtn" class="cancel-btn" style="margin:4px 0 0">▶ Reanudar</button>`;
+    const resumeBtn = document.getElementById('rpResumeBtn');
+    if (resumeBtn) {
+      resumeBtn.addEventListener('click', async () => {
+        await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/resume`, { method: 'POST' });
+      });
+    }
   } else {
-    div.innerHTML = `
-      <span>El bot está respondiendo automático aquí. Pausarlo manualmente:</span>
-      <button id="pause10Btn" class="cancel-btn" style="margin:0">⏸️ 10 min</button>
-      <button id="pause30Btn" class="cancel-btn" style="margin:0">⏸️ 30 min</button>
-      <button id="pause60Btn" class="cancel-btn" style="margin:0">⏸️ 60 min</button>
-    `;
-    document.getElementById('pause10Btn').addEventListener('click', () => pauseSelected(10));
-    document.getElementById('pause30Btn').addEventListener('click', () => pauseSelected(30));
-    document.getElementById('pause60Btn').addEventListener('click', () => pauseSelected(60));
+    aiStatusEl.textContent = '🤖 La IA está respondiendo aquí';
   }
 }
 
-async function pauseSelected(minutes) {
+document.getElementById('rpTag').addEventListener('change', async (e) => {
   if (!selectedClientJid) return;
+  await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/tag`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag: e.target.value }),
+  });
+});
+
+document.getElementById('rpStatusSelect').addEventListener('change', async (e) => {
+  if (!selectedClientJid) return;
+  await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: e.target.value }),
+  });
+});
+
+document.getElementById('rpPauseSelect').addEventListener('change', async (e) => {
+  if (!selectedClientJid || !e.target.value) return;
+  const body = e.target.value === 'indefinite' ? { indefinite: true } : { minutes: Number(e.target.value) };
   await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/pause`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ minutes }),
+    body: JSON.stringify(body),
   });
+  e.target.value = '';
+});
+
+document.getElementById('rpActivateBotBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  const btn = document.getElementById('rpActivateBotBtn');
+  btn.disabled = true;
+  btn.textContent = 'Activando...';
+  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/activate-bot`, { method: 'POST' }).then((r) => r.json());
+  btn.disabled = false;
+  btn.textContent = '🤖 Activar bot (re-disparar último mensaje)';
+  if (!res.ok) alert(res.error || 'No se pudo activar el bot');
+});
+
+document.getElementById('rpActivateProductBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  const productId = document.getElementById('rpProductSelect').value;
+  if (!productId) return alert('Elige un producto primero');
+  const btn = document.getElementById('rpActivateProductBtn');
+  btn.disabled = true;
+  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/activate-product`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productId }),
+  }).then((r) => r.json());
+  btn.disabled = false;
+  if (!res.ok) alert(res.error || 'No se pudo activar el asistente');
+});
+
+document.getElementById('rpConfirmOrderBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/confirm-order`, { method: 'POST' }).then((r) => r.json());
+  if (res.error) return alert(res.error);
+  alert(`Pedido ${res.id} creado. Ábrelo desde la pestaña Pedidos para revisarlo antes de subirlo.`);
+});
+
+document.getElementById('rpManualOrderBtn').addEventListener('click', () => {
+  if (!selectedClientJid) return;
+  const client = clientsCache.find((c) => c.jid === selectedClientJid);
+  document.getElementById('mo-clientName').value = client?.name || '';
+  document.getElementById('mo-clientPhone').value = client?.phone || '';
+  document.getElementById('mo-product').value = '';
+  document.getElementById('mo-quantity').value = 1;
+  document.getElementById('mo-price').value = '';
+  document.getElementById('mo-address').value = '';
+  document.getElementById('mo-department').value = '';
+  document.getElementById('mo-city').value = '';
+  document.getElementById('mo-neighborhood').value = '';
+  document.getElementById('manualOrderOverlay').style.display = 'flex';
+});
+document.getElementById('closeManualOrderBtn').addEventListener('click', () => {
+  document.getElementById('manualOrderOverlay').style.display = 'none';
+});
+document.getElementById('saveManualOrderBtn').addEventListener('click', async () => {
+  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/manual-order`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientName: document.getElementById('mo-clientName').value,
+      clientPhone: document.getElementById('mo-clientPhone').value,
+      product: document.getElementById('mo-product').value,
+      quantity: Number(document.getElementById('mo-quantity').value) || 1,
+      price: document.getElementById('mo-price').value,
+      deliveryType: document.getElementById('mo-deliveryType').value,
+      address: document.getElementById('mo-address').value,
+      department: document.getElementById('mo-department').value,
+      city: document.getElementById('mo-city').value,
+      neighborhood: document.getElementById('mo-neighborhood').value,
+    }),
+  }).then((r) => r.json());
+  document.getElementById('manualOrderOverlay').style.display = 'none';
+  alert(`Pedido ${res.id} creado.`);
+});
+
+document.getElementById('rpDeleteChatBtn').addEventListener('click', () => deleteSelectedChat(selectedClientJid));
+
+async function deleteSelectedChat(jid) {
+  const client = clientsCache.find((c) => c.jid === jid);
+  const label = client?.name || client?.phone || jid.split('@')[0];
+  if (!confirm(`¿Borrar TODA la conversación con ${label}? Esto borra el chat, la memoria de la IA, y su estado en el CRM. No se puede deshacer.`)) return;
+  const res = await fetch(`/api/clients/${encodeURIComponent(jid)}`, { method: 'DELETE' }).then((r) => r.json());
+  if (!res.ok) return alert(res.error || 'No se pudo borrar el chat');
+  selectedClientJid = null;
+  document.getElementById('chatHeader').textContent = 'Selecciona un cliente de la lista →';
+  document.getElementById('chatMessages').innerHTML = '';
+  document.getElementById('chatsRightPanel').style.display = 'none';
+  loadClients();
 }
 
 // ---- Enviar texto / imagen / audio ----
@@ -663,10 +805,7 @@ document.getElementById('chatSendBtn').addEventListener('click', async () => {
   if (mediaFile) {
     const formData = new FormData();
     formData.append('media', mediaFile);
-    const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send-media`, {
-      method: 'POST',
-      body: formData,
-    }).then((r) => r.json());
+    const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send-media`, { method: 'POST', body: formData }).then((r) => r.json());
     if (!res.ok) alert(res.error || 'No se pudo enviar el archivo');
     document.getElementById('chatMediaInput').value = '';
   }
@@ -689,27 +828,267 @@ document.getElementById('chatMediaInput').addEventListener('change', () => {
   if (file) document.getElementById('chatReplyInput').placeholder = `Adjunto: ${file.name} (dale Enviar)`;
 });
 
-// ---- Actualizaciones en vivo, sin recargar nada ----
+// ---- Grabar nota de voz con el micrófono, tipo WhatsApp ----
+// Clic para empezar a grabar, clic de nuevo para parar y enviar solo.
+// Nota: esto necesita "contexto seguro" del navegador (localhost sí sirve,
+// pero acceder por la IP de red tipo 192.168.x.x por http:// normalmente NO
+// — es una restricción de seguridad de los navegadores, no un bug nuestro).
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingStartedAt = null;
+let recordingTimerInterval = null;
+const recordBtn = document.getElementById('recordVoiceBtn');
+
+recordBtn.addEventListener('click', async () => {
+  if (!selectedClientJid) {
+    alert('Selecciona un cliente primero');
+    return;
+  }
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop(); // el propio onstop se encarga de mandar el audio
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      clearInterval(recordingTimerInterval);
+      recordBtn.classList.remove('recording');
+      recordBtn.textContent = '🎤';
+
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      if (blob.size < 800) return; // grabación demasiado corta (clic accidental), no se manda
+
+      const formData = new FormData();
+      formData.append('recording', blob, 'nota-de-voz.webm');
+      recordBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send-voice-recording`, {
+          method: 'POST',
+          body: formData,
+        }).then((r) => r.json());
+        if (!res.ok) alert(res.error || 'No se pudo enviar la nota de voz');
+      } catch (err) {
+        alert('Error de conexión al enviar la nota de voz.');
+      } finally {
+        recordBtn.disabled = false;
+      }
+    };
+
+    mediaRecorder.start();
+    recordingStartedAt = Date.now();
+    recordBtn.classList.add('recording');
+    recordBtn.textContent = '⏹️ 0:00';
+    recordingTimerInterval = setInterval(() => {
+      const secs = Math.floor((Date.now() - recordingStartedAt) / 1000);
+      const mm = Math.floor(secs / 60);
+      const ss = String(secs % 60).padStart(2, '0');
+      recordBtn.textContent = `⏹️ ${mm}:${ss}`;
+    }, 500);
+  } catch (err) {
+    alert(
+      'No se pudo acceder al micrófono. Si estás entrando desde otro dispositivo por la IP de red (no localhost), el navegador bloquea el micrófono por seguridad — usa la PC directamente, o configura HTTPS.'
+    );
+  }
+});
+
+// ---- Navegación móvil (lista <-> chat <-> panel) ----
+function showMobileChatView() {
+  document.querySelector('.chats-sidebar').classList.remove('mobile-visible');
+  document.querySelector('.chats-main').classList.add('mobile-visible');
+  document.getElementById('chatsRightPanel').classList.remove('mobile-visible');
+}
+document.getElementById('mobileBackToListBtn')?.addEventListener('click', () => {
+  document.querySelector('.chats-sidebar').classList.add('mobile-visible');
+  document.querySelector('.chats-main').classList.remove('mobile-visible');
+});
+document.getElementById('mobileOpenPanelBtn')?.addEventListener('click', () => {
+  document.querySelector('.chats-main').classList.remove('mobile-visible');
+  document.getElementById('chatsRightPanel').classList.add('mobile-visible');
+});
+document.getElementById('mobileClosePanelBtn')?.addEventListener('click', () => {
+  document.getElementById('chatsRightPanel').classList.remove('mobile-visible');
+  document.querySelector('.chats-main').classList.add('mobile-visible');
+});
+
+// ---- Actualizaciones en vivo ----
 socket.on('chatMessage', ({ jid, entry }) => {
   if (jid === selectedClientJid) appendMessageBubble(entry);
   loadClients();
 });
-socket.on('clientUpdate', () => loadClients());
-socket.on('pauseUpdate', ({ jid, pausedUntil }) => {
+socket.on('clientUpdate', ({ jid, client }) => {
   loadClients();
-  if (jid === selectedClientJid) renderPauseBar(pausedUntil);
+  if (jid === selectedClientJid) renderRightPanel(client);
 });
+socket.on('pauseUpdate', () => loadClients());
 socket.on('clientDeleted', ({ jid }) => {
   loadClients();
   if (jid === selectedClientJid) {
     selectedClientJid = null;
     document.getElementById('chatHeader').textContent = 'Selecciona un cliente de la lista →';
     document.getElementById('chatMessages').innerHTML = '';
-    document.getElementById('pauseBar').style.display = 'none';
+    document.getElementById('chatsRightPanel').style.display = 'none';
   }
 });
 
+// En celular, arranca mostrando la lista de clientes (no el chat vacío ni el
+// panel derecho) — sin esto, ninguna de las tres columnas se vería al abrir.
+if (window.innerWidth <= 860) {
+  document.querySelector('.chats-sidebar').classList.add('mobile-visible');
+}
+
 loadClients();
+
+// ---------- Pedidos ----------
+let ordersCache = [];
+let activeOrderDateFilter = 'todas';
+let editingOrderId = null;
+
+async function loadOrders() {
+  ordersCache = await fetch('/api/orders').then((r) => r.json());
+  renderOrderStats();
+  renderOrdersTable();
+}
+document.getElementById('refreshOrdersBtn').addEventListener('click', loadOrders);
+
+document.getElementById('orderStatusFilter').innerHTML +=
+  STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
+document.getElementById('orderStatusFilter').addEventListener('change', renderOrdersTable);
+
+document.querySelectorAll('[data-order-date]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-order-date]').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeOrderDateFilter = btn.dataset.orderDate;
+    renderOrdersTable();
+  });
+});
+
+function renderOrderStats() {
+  const div = document.getElementById('pedidosStats');
+  const counts = {};
+  ordersCache.forEach((o) => { counts[o.status] = (counts[o.status] || 0) + 1; });
+  // "pendiente" no está en STATUS_COLUMNS (es el estado inicial de un pedido,
+  // antes de generar guía), lo mostramos aparte del resto de etapas.
+  const pendienteCount = counts['pendiente'] || 0;
+  div.innerHTML =
+    `<div class="stat-card"><b>${ordersCache.length}</b><span>Total</span></div>` +
+    `<div class="stat-card" style="color:#f59e0b"><b>${pendienteCount}</b><span>Pendientes</span></div>` +
+    STATUS_COLUMNS.map((s) => `<div class="stat-card" style="color:${s.color}"><b>${counts[s.key] || 0}</b><span>${s.label}</span></div>`).join('');
+}
+
+function renderOrdersTable() {
+  const tbody = document.getElementById('pedidosTableBody');
+  const statusFilter = document.getElementById('orderStatusFilter').value;
+  tbody.innerHTML = '';
+  ordersCache
+    .filter((o) => !statusFilter || o.status === statusFilter)
+    .filter((o) => isWithinDateFilter(o.createdAt, activeOrderDateFilter))
+    .forEach((o) => {
+      const statusInfo = STATUS_COLUMNS.find((s) => s.key === o.status) || { label: o.status || 'pendiente', color: '#f59e0b' };
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${o.id}</td>
+        <td>${formatTime(o.createdAt)}</td>
+        <td>${o.clientName || o.clientPhone || '-'}</td>
+        <td>${o.product || '-'}</td>
+        <td>${o.city || '-'}</td>
+        <td>${o.price || '-'}</td>
+        <td style="color:${statusInfo.color}">${statusInfo.label}</td>
+      `;
+      tr.addEventListener('click', () => openOrderDetail(o.id));
+      tbody.appendChild(tr);
+    });
+}
+
+function openOrderDetail(id) {
+  const order = ordersCache.find((o) => o.id === id);
+  if (!order) return;
+  editingOrderId = id;
+  document.getElementById('orderDetailTitle').textContent = `Pedido ${order.id}`;
+  document.getElementById('od-clientName').value = order.clientName || '';
+  document.getElementById('od-clientPhone').value = order.clientPhone || '';
+  document.getElementById('od-product').value = order.product || '';
+  document.getElementById('od-quantity').value = order.quantity || 1;
+  document.getElementById('od-price').value = order.price || '';
+  document.getElementById('od-deliveryType').value = order.deliveryType || 'domicilio';
+  document.getElementById('od-address').value = order.address || '';
+  document.getElementById('od-department').value = order.department || '';
+  document.getElementById('od-city').value = order.city || '';
+  document.getElementById('od-neighborhood').value = order.neighborhood || '';
+  document.getElementById('od-transportadora').value = order.transportadora || '';
+  const statusSelect = document.getElementById('od-status');
+  statusSelect.innerHTML =
+    `<option value="pendiente">🟡 Pendiente</option>` +
+    STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
+  statusSelect.value = order.status || 'pendiente';
+  document.getElementById('uploadStatus').textContent = '';
+  document.getElementById('orderDetailOverlay').style.display = 'flex';
+}
+document.getElementById('closeOrderDetailBtn').addEventListener('click', () => {
+  document.getElementById('orderDetailOverlay').style.display = 'none';
+});
+
+document.getElementById('saveOrderBtn').addEventListener('click', async () => {
+  if (!editingOrderId) return;
+  await fetch(`/api/orders/${editingOrderId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientName: document.getElementById('od-clientName').value,
+      clientPhone: document.getElementById('od-clientPhone').value,
+      product: document.getElementById('od-product').value,
+      quantity: Number(document.getElementById('od-quantity').value) || 1,
+      price: document.getElementById('od-price').value,
+      deliveryType: document.getElementById('od-deliveryType').value,
+      address: document.getElementById('od-address').value,
+      department: document.getElementById('od-department').value,
+      city: document.getElementById('od-city').value,
+      neighborhood: document.getElementById('od-neighborhood').value,
+      transportadora: document.getElementById('od-transportadora').value,
+      status: document.getElementById('od-status').value,
+    }),
+  });
+  document.getElementById('orderDetailOverlay').style.display = 'none';
+  loadOrders();
+});
+
+document.getElementById('deleteOrderBtn').addEventListener('click', async () => {
+  if (!editingOrderId) return;
+  if (!confirm(`¿Eliminar el pedido ${editingOrderId}? No se puede deshacer.`)) return;
+  await fetch(`/api/orders/${editingOrderId}`, { method: 'DELETE' });
+  document.getElementById('orderDetailOverlay').style.display = 'none';
+  loadOrders();
+});
+
+document.getElementById('uploadDropiBtn').addEventListener('click', async () => {
+  if (!editingOrderId) return;
+  const statusEl = document.getElementById('uploadStatus');
+  statusEl.style.color = '';
+  statusEl.textContent = 'Subiendo a Dropi...';
+  const res = await fetch(`/api/orders/${editingOrderId}/upload-dropi`, { method: 'POST' }).then((r) => r.json());
+  statusEl.style.color = res.ok ? '#16a34a' : '#dc2626';
+  statusEl.textContent = res.ok ? '✔ Subido a Dropi' : res.error;
+});
+document.getElementById('uploadSkydropxBtn').addEventListener('click', async () => {
+  if (!editingOrderId) return;
+  const statusEl = document.getElementById('uploadStatus');
+  statusEl.style.color = '';
+  statusEl.textContent = 'Subiendo a Skydropx...';
+  const res = await fetch(`/api/orders/${editingOrderId}/upload-skydropx`, { method: 'POST' }).then((r) => r.json());
+  statusEl.style.color = res.ok ? '#16a34a' : '#dc2626';
+  statusEl.textContent = res.ok ? '✔ Subido a Skydropx' : res.error;
+});
+
+socket.on('orderUpdate', () => loadOrders());
+loadOrders();
 
 // ---------- Respaldo (exportar / importar productos y configuración) ----------
 document.getElementById('exportBackupBtn').addEventListener('click', () => {
