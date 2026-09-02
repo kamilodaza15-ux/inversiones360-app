@@ -1,6 +1,6 @@
 {
-  "version": "1.20.0",
-  "notes": "Rediseño completo: barra lateral colapsable (como WhatsApp Web), modo oscuro/claro, Chats y Tableros separados, y tablero ampliado con etapas de logística (guía generada, en camino, con novedad, entregado, devuelto) movibles a mano.",
+  "version": "1.21.1",
+  "notes": "Botón de micrófono para grabar y enviar notas de voz en vivo desde el panel (como WhatsApp), y el adjuntar archivo ahora también acepta video.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
