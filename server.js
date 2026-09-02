@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.20.0';
+const CURRENT_VERSION = '1.21.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -47,6 +47,7 @@ const CONVERSATIONS_PATH = path.join(DATA_DIR, 'conversations.json');
 const CLIENTS_PATH = path.join(DATA_DIR, 'clients.json');
 const CHAT_LOGS_PATH = path.join(DATA_DIR, 'chat-logs.json');
 const PAUSED_CHATS_PATH = path.join(DATA_DIR, 'paused-chats.json');
+const ORDERS_PATH = path.join(DATA_DIR, 'orders.json');
 const SESSION_DIR = path.join(__dirname, 'session');
 
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -532,6 +533,22 @@ app.post('/api/clients/:jid/status', (req, res) => {
   res.json({ ok: true });
 });
 
+// Cambiar la etiqueta (Lead/Interesado/Cliente/Descartado) a mano — una vez
+// se cambia manualmente, deja de actualizarse sola con los mensajes nuevos.
+app.post('/api/clients/:jid/tag', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const tag = req.body.tag;
+  if (!tag) return res.status(400).json({ error: 'Falta la etiqueta' });
+  const rec = clients.get(jid);
+  if (!rec) return res.status(404).json({ error: 'Cliente no encontrado' });
+  rec.tag = tag;
+  rec.tagManual = true;
+  clients.set(jid, rec);
+  saveClients();
+  io.emit('clientUpdate', { jid, client: rec });
+  res.json({ ok: true });
+});
+
 app.get('/api/clients/:jid/messages', (req, res) => {
   const jid = decodeURIComponent(req.params.jid);
   res.json(chatLogs.get(jid) || []);
@@ -568,12 +585,16 @@ const uploadChatMedia = multer({
     },
   }),
   fileFilter: (req, file, cb) => {
-    if (!file.mimetype.startsWith('image/') && !file.mimetype.startsWith('audio/')) {
-      return cb(new Error('Solo se pueden enviar imágenes o audios desde aquí'));
+    if (
+      !file.mimetype.startsWith('image/') &&
+      !file.mimetype.startsWith('audio/') &&
+      !file.mimetype.startsWith('video/')
+    ) {
+      return cb(new Error('Solo se pueden enviar imágenes, videos o audios desde aquí'));
     }
     cb(null, true);
   },
-  limits: { fileSize: 25 * 1024 * 1024 },
+  limits: { fileSize: 60 * 1024 * 1024 }, // un poco más grande, para permitir videos cortos
 }).single('media');
 
 app.post('/api/clients/:jid/send-media', uploadChatMedia, async (req, res) => {
@@ -584,14 +605,28 @@ app.post('/api/clients/:jid/send-media', uploadChatMedia, async (req, res) => {
     const filePath = req.file.path;
     const buffer = fs.readFileSync(filePath);
     const isImage = req.file.mimetype.startsWith('image/');
-    const content = isImage ? { image: buffer } : { audio: buffer, mimetype: req.file.mimetype, ptt: false };
+    const isVideo = req.file.mimetype.startsWith('video/');
+    let content, type, text;
+    if (isImage) {
+      content = { image: buffer };
+      type = 'image';
+      text = '(imagen enviada)';
+    } else if (isVideo) {
+      content = { video: buffer };
+      type = 'video';
+      text = '(video enviado)';
+    } else {
+      content = { audio: buffer, mimetype: req.file.mimetype, ptt: false };
+      type = 'audio';
+      text = '(audio enviado)';
+    }
     await sendAndTrack(jid, content);
 
     ensureClientRecord(jid);
     appendChatLog(jid, {
       from: 'owner',
-      text: isImage ? '(imagen enviada)' : '(audio enviado)',
-      type: isImage ? 'image' : 'audio',
+      text,
+      type,
       mediaUrl: `/media/${req.file.filename}`,
       timestamp: Date.now(),
     });
@@ -604,8 +639,61 @@ app.post('/api/clients/:jid/send-media', uploadChatMedia, async (req, res) => {
   }
 });
 
+// Enviar una nota de voz grabada en vivo desde el navegador (botón de
+// micrófono, como WhatsApp). El navegador graba en un formato genérico
+// (webm/ogg según el navegador) — lo convertimos a OGG/Opus con el mismo
+// ffmpeg que ya usamos para la voz clonada de MiniMax, para que llegue como
+// nota de voz de verdad, reproducible en cualquier WhatsApp.
+const uploadVoiceRecording = multer({
+  storage: multer.diskStorage({
+    destination: TMP_DIR,
+    filename: (req, file, cb) => cb(null, `recording-${Date.now()}${path.extname(file.originalname) || '.webm'}`),
+  }),
+  limits: { fileSize: 25 * 1024 * 1024 },
+}).single('recording');
+
+app.post('/api/clients/:jid/send-voice-recording', uploadVoiceRecording, async (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  if (!req.file) return res.status(400).json({ error: 'No llegó ninguna grabación' });
+  if (!sock) return res.status(400).json({ error: 'El bot no está conectado a WhatsApp' });
+
+  const inputPath = req.file.path;
+  const oggFilename = `voice-owner-${Date.now()}.ogg`;
+  const oggPath = path.join(MEDIA_DIR, oggFilename);
+
+  try {
+    ensureFfmpegConfigured();
+    // Aunque se llama "Mp3ToOggOpus", en realidad convierte cualquier audio
+    // de entrada (ffmpeg detecta el formato solo) — sirve igual para webm.
+    await convertMp3ToOggOpus(inputPath, oggPath);
+    const oggBuffer = fs.readFileSync(oggPath);
+    await sendAndTrack(jid, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+
+    ensureClientRecord(jid);
+    appendChatLog(jid, {
+      from: 'owner',
+      text: '(nota de voz enviada)',
+      type: 'voice',
+      mediaUrl: `/media/${oggFilename}`,
+      timestamp: Date.now(),
+    });
+    const cfgNow = readConfig();
+    const minutes = Number(cfgNow.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
+    pauseChat(jid, minutes);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo enviar la nota de voz: ' + err.message });
+  } finally {
+    fs.unlink(inputPath, () => {});
+  }
+});
+
 app.post('/api/clients/:jid/pause', (req, res) => {
   const jid = decodeURIComponent(req.params.jid);
+  if (req.body.indefinite) {
+    const until = pauseChatIndefinitely(jid);
+    return res.json({ ok: true, pausedUntil: until });
+  }
   const minutes = Number(req.body.minutes) || DEFAULT_PAUSE_MINUTES;
   const until = pauseChat(jid, minutes);
   res.json({ ok: true, pausedUntil: until });
@@ -639,6 +727,152 @@ app.delete('/api/clients/:jid', (req, res) => {
 
   io.emit('clientDeleted', { jid });
   res.json({ ok: true });
+});
+
+// "Activar bot": re-dispara la respuesta al último mensaje del cliente —
+// útil si el bot se quedó callado por algún error puntual.
+app.post('/api/clients/:jid/activate-bot', async (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  try {
+    resumeChat(jid); // si estaba pausado, lo reanuda de una vez también
+    const reply = await generateAndSendReply(jid);
+    res.json({ ok: true, reply });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo activar el bot: ' + err.message });
+  }
+});
+
+// "Activar asistente de un producto": fuerza a que la próxima respuesta
+// hable de un producto específico (útil cuando sabes por la campaña de
+// dónde viene el cliente, aunque él no haya dicho cuál producto le interesa).
+app.post('/api/clients/:jid/activate-product', async (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const productId = req.body.productId;
+  const products = readProducts();
+  const product = products.find((p) => p.id === productId);
+  if (!product) return res.status(400).json({ error: 'Producto no encontrado' });
+
+  try {
+    resumeChat(jid);
+    if (!conversations.has(jid)) {
+      conversations.set(jid, [{ role: 'system', content: buildSystemPrompt() }]);
+    }
+    const history = conversations.get(jid);
+    history.push({
+      role: 'system',
+      content: `El dueño del negocio activó manualmente el asistente para el producto "${product.name}" en esta conversación. Retoma la conversación con el cliente enfocándote en ESE producto específico — preséntalo con naturalidad, como si continuaras la charla, sin decir que "te activaron" nada.`,
+    });
+    const reply = await generateAndSendReply(jid);
+    res.json({ ok: true, reply });
+  } catch (err) {
+    res.status(500).json({ error: 'No se pudo activar el asistente: ' + err.message });
+  }
+});
+
+// ---------- API: Pedidos ----------
+app.get('/api/orders', (req, res) => {
+  res.json([...orders].sort((a, b) => b.createdAt - a.createdAt));
+});
+
+app.post('/api/orders', (req, res) => {
+  const order = createOrder({ ...req.body, source: req.body.source || 'manual' });
+  // Si el pedido viene de un cliente real, lo marcamos como comprado en el CRM también.
+  if (order.clientJid) {
+    updateClientStatus(order.clientJid, 'comprado', {});
+  }
+  res.json(order);
+});
+
+app.put('/api/orders/:id', (req, res) => {
+  const order = updateOrder(req.params.id, req.body);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+  res.json(order);
+});
+
+app.delete('/api/orders/:id', (req, res) => {
+  orders = orders.filter((o) => o.id !== req.params.id);
+  saveOrders();
+  res.json({ ok: true });
+});
+
+// "Confirmar y subir": toma el resumen de pedido que la IA ya detectó para
+// ese cliente (guardado cuando dijo "ORDEN DE COMPRA REGISTRADA") y lo
+// convierte en un Pedido de verdad, con los datos prellenados — quedan
+// editables antes de mandarlos a Dropi/Skydropx.
+app.post('/api/clients/:jid/confirm-order', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const client = clients.get(jid);
+  if (!client || !client.lastOrderSummary) {
+    return res.status(400).json({ error: 'Este cliente todavía no tiene un pedido detectado por la IA' });
+  }
+  const summary = client.lastOrderSummary;
+  const order = createOrder({
+    clientJid: jid,
+    clientName: client.name || extractNameFromOrderText(summary) || '',
+    clientPhone: client.phone,
+    product: extractProductFromOrderText(summary) || '',
+    price: extractPriceFromOrderText(summary) || '',
+    address: extractAddressFromOrderText(summary) || '',
+    city: extractCityFromOrderText(summary) || '',
+    status: 'pendiente',
+    source: 'ia',
+    rawSummary: summary,
+  });
+  res.json(order);
+});
+
+// "Cerrar pedido (manual)": para cuando la IA no cerró la venta pero el
+// cliente sí dejó los datos en la conversación — se llenan a mano.
+app.post('/api/clients/:jid/manual-order', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const order = createOrder({
+    clientJid: jid,
+    clientName: req.body.clientName || '',
+    clientPhone: req.body.clientPhone || '',
+    product: req.body.product || '',
+    quantity: req.body.quantity || 1,
+    price: req.body.price || '',
+    address: req.body.address || '',
+    department: req.body.department || '',
+    city: req.body.city || '',
+    neighborhood: req.body.neighborhood || '',
+    deliveryType: req.body.deliveryType || 'domicilio',
+    status: 'pendiente',
+    source: 'manual',
+  });
+  updateClientStatus(jid, 'comprado', {});
+  res.json(order);
+});
+
+// Botones "Subir a Dropi" / "Subir a Skydropx" — quedan conectados al panel
+// desde ya, pero avisan honestamente que falta la documentación/credenciales
+// reales de cada API antes de poder crear la guía de verdad.
+app.post('/api/orders/:id/upload-dropi', async (req, res) => {
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+  const cfg = readConfig();
+  if (!cfg.dropiApiKey) {
+    return res.status(400).json({
+      error: 'Falta configurar la API de Dropi (todavía no tenemos la documentación/credenciales conectadas).',
+    });
+  }
+  // TODO: cuando tengamos la documentación real de la API de Dropi, aquí va
+  // la llamada real para crear la orden/guía.
+  res.status(501).json({ error: 'La conexión real con Dropi todavía no está implementada.' });
+});
+
+app.post('/api/orders/:id/upload-skydropx', async (req, res) => {
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+  const cfg = readConfig();
+  if (!cfg.skydropxApiKey) {
+    return res.status(400).json({
+      error: 'Falta configurar la API de Skydropx (todavía no tenemos la documentación/credenciales conectadas).',
+    });
+  }
+  // TODO: cuando tengamos la documentación real de la API de Skydropx, aquí
+  // va la llamada real para crear el envío/guía.
+  res.status(501).json({ error: 'La conexión real con Skydropx todavía no está implementada.' });
 });
 
 // ---------- IA: helpers de proveedor ----------
@@ -694,6 +928,98 @@ const productVideoTool = {
     },
   },
 };
+
+// Genera y manda una respuesta de la IA para un cliente, asumiendo que su
+// historial (conversations) ya tiene el turno más reciente listo — se usa
+// tanto para "Activar bot (re-disparar último mensaje)" como para "Activar
+// asistente de un producto" desde el panel derecho. Es básicamente el mismo
+// flujo que corre automáticamente en processMessage, pero disparado a mano.
+async function generateAndSendReply(userId) {
+  const cfg = readConfig();
+  const history = conversations.get(userId);
+  if (!history) throw new Error('No hay conversación con este cliente todavía');
+
+  let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool]);
+
+  if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+    history.push({
+      role: 'assistant',
+      content: aiMessage.content || null,
+      tool_calls: aiMessage.tool_calls,
+    });
+
+    for (const toolCall of aiMessage.tool_calls) {
+      let args = {};
+      try {
+        args = JSON.parse(toolCall.function.arguments || '{}');
+      } catch (e) {}
+
+      let resultText = 'No se encontró el producto solicitado.';
+      if (toolCall.function.name === 'enviar_imagen_producto') {
+        const product = findProductByQuery(args.producto);
+        const sent = await sendProductImages(userId, product);
+        resultText = sent
+          ? `Imagen(es) de "${product.name}" enviadas correctamente.`
+          : 'No hay imágenes disponibles para ese producto.';
+      } else if (toolCall.function.name === 'enviar_video_producto') {
+        const product = findProductByQuery(args.producto);
+        const sent = await sendProductVideo(userId, product);
+        resultText = sent
+          ? `Video de "${product.name}" enviado correctamente.`
+          : 'Ese producto no tiene un video cargado.';
+      }
+
+      history.push({ role: 'tool', tool_call_id: toolCall.id, content: resultText });
+    }
+
+    aiMessage = await getAIMessage(history);
+  }
+
+  const reply = (aiMessage.content || '').trim() || 'Listo 😊';
+  history.push({ role: 'assistant', content: reply });
+  saveConversations();
+  appendChatLog(userId, { from: 'bot', text: reply, type: 'text', timestamp: Date.now() });
+
+  const isOrderConfirmation = reply.includes('ORDEN DE COMPRA REGISTRADA') || reply.includes('PEDIDO CANCELADO');
+  const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
+  const minimaxReady = cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
+  const shouldReplyWithVoice = !isOrderConfirmation && minimaxReady && voiceMode === 'voice';
+
+  if (shouldReplyWithVoice) {
+    try {
+      await sendVoiceReply(userId, reply);
+    } catch (err) {
+      console.error('Error generando audio con MiniMax, se responde en texto:', err);
+      await sendAndTrack(userId, { text: reply });
+    }
+  } else {
+    await sendAndTrack(userId, { text: reply });
+  }
+
+  if (reply.includes('ORDEN DE COMPRA REGISTRADA') && cfg.notificationPhoneNumber) {
+    try {
+      await notifyOwnerOfSale(cfg, userId, reply);
+    } catch (err) {
+      console.error('Error notificando la venta:', err);
+    }
+  }
+  if (reply.includes('ORDEN DE COMPRA REGISTRADA')) {
+    const name = extractNameFromOrderText(reply);
+    updateClientStatus(userId, 'comprado', { lastOrderSummary: reply, ...(name ? { name } : {}) });
+  }
+  if (reply.includes('PEDIDO CANCELADO') && cfg.notificationPhoneNumber) {
+    try {
+      await notifyOwnerOfCancellation(cfg, userId, reply);
+    } catch (err) {
+      console.error('Error notificando la cancelación:', err);
+    }
+  }
+  if (reply.includes('PEDIDO CANCELADO')) {
+    updateClientStatus(userId, 'cancelado', {});
+  }
+
+  return reply;
+}
 
 function findProductByQuery(query) {
   const products = readProducts();
@@ -1204,6 +1530,8 @@ function ensureClientRecord(jid) {
       phone: jid.split('@')[0],
       name: '',
       status: 'nuevo',
+      tag: 'lead',
+      tagManual: false,
       messageCount: 0,
       lastMessageAt: Date.now(),
       createdAt: Date.now(),
@@ -1213,6 +1541,16 @@ function ensureClientRecord(jid) {
   }
   saveClients();
   io.emit('clientUpdate', { jid, client: clients.get(jid) });
+}
+
+// Traduce la etapa detallada del tablero a una etiqueta simple (Lead /
+// Interesado / Cliente / Descartado), para poder filtrar la lista de chats
+// sin tener que pensar en las 10 etapas del tablero una por una.
+function deriveTagFromStatus(status) {
+  if (status === 'nuevo') return 'lead';
+  if (status === 'conversando' || status === 'interesado') return 'interesado';
+  if (status === 'cancelado' || status === 'devuelto') return 'descartado';
+  return 'cliente'; // comprado, guia_generada, en_camino, con_novedad, entregado
 }
 
 // Avanza la etapa del cliente sola, según cuántos mensajes lleva la
@@ -1230,6 +1568,7 @@ function advanceClientStageIfNeeded(jid) {
   if (rec.status === 'conversando' && rec.messageCount >= 3) {
     rec.status = 'interesado';
   }
+  if (!rec.tagManual) rec.tag = deriveTagFromStatus(rec.status);
   clients.set(jid, rec);
   saveClients();
   io.emit('clientUpdate', { jid, client: rec });
@@ -1242,6 +1581,7 @@ function updateClientStatus(jid, status, extra) {
     createdAt: Date.now(),
   };
   Object.assign(rec, { status, lastMessageAt: Date.now() }, extra || {});
+  if (!rec.tagManual) rec.tag = deriveTagFromStatus(status);
   clients.set(jid, rec);
   saveClients();
   io.emit('clientUpdate', { jid, client: rec });
@@ -1279,6 +1619,19 @@ function pauseChat(jid, minutes) {
   return until;
 }
 
+// "Hasta que yo reactive": en vez de inventar un tipo de dato nuevo (que
+// complicaría guardar/leer el archivo), simplemente se pausa por un tiempo
+// tan largo (~100 años) que en la práctica equivale a "indefinido" — el
+// panel lo muestra como "Pausado indefinidamente" en vez de una hora exacta.
+const INDEFINITE_PAUSE_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+function pauseChatIndefinitely(jid) {
+  const until = Date.now() + INDEFINITE_PAUSE_MS;
+  pausedChats.set(jid, until);
+  savePausedChats();
+  io.emit('pauseUpdate', { jid, pausedUntil: until });
+  return until;
+}
+
 function resumeChat(jid) {
   pausedChats.delete(jid);
   savePausedChats();
@@ -1290,6 +1643,92 @@ function resumeChat(jid) {
 function extractNameFromOrderText(text) {
   const match = (text || '').match(/nombre[:\s]*([^\n📍🏙️📱💰🛍️]{2,60})/i);
   return match ? match[1].trim() : null;
+}
+
+// Estas extracciones son "mejor esfuerzo" — sirven para prellenar el
+// formulario de "Confirmar y subir", pero siempre quedan editables antes de
+// mandarlas a Dropi/Skydropx, así que no tienen que ser perfectas.
+function extractProductFromOrderText(text) {
+  const match = (text || '').match(/producto[:\s]*([^\n💰📍🏙️📱]{2,80})/i);
+  return match ? match[1].trim() : null;
+}
+function extractPriceFromOrderText(text) {
+  const match = (text || '').match(/precio[:\s]*\$?\s?([\d.,]+)/i);
+  return match ? match[1].trim() : null;
+}
+function extractAddressFromOrderText(text) {
+  const match = (text || '').match(/direcci[oó]n[:\s]*([^\n🏙️📱💰🛍️]{3,100})/i);
+  return match ? match[1].trim() : null;
+}
+function extractCityFromOrderText(text) {
+  const match = (text || '').match(/ciudad y departamento[:\s]*([^\n📱💰🛍️]{2,80})/i);
+  return match ? match[1].trim() : null;
+}
+
+// ---- Pedidos (Orders): la lista que se sube a Dropi/Skydropx ----
+let orders = [];
+let nextOrderNumber = 1;
+
+function loadOrders() {
+  if (fs.existsSync(ORDERS_PATH)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(ORDERS_PATH, 'utf8'));
+      orders = raw.orders || [];
+      nextOrderNumber = raw.nextOrderNumber || orders.length + 1;
+    } catch (e) {
+      console.error('No se pudo cargar orders.json:', e);
+    }
+  }
+}
+function saveOrders() {
+  fs.writeFile(
+    ORDERS_PATH,
+    JSON.stringify({ orders, nextOrderNumber }, null, 2),
+    (err) => {
+      if (err) console.error('Error guardando orders.json:', err);
+    }
+  );
+}
+loadOrders();
+
+function createOrder(fields) {
+  const id = `ORD-${String(nextOrderNumber).padStart(4, '0')}`;
+  nextOrderNumber += 1;
+  const order = {
+    id,
+    clientJid: fields.clientJid || '',
+    clientName: fields.clientName || '',
+    clientPhone: fields.clientPhone || '',
+    product: fields.product || '',
+    quantity: fields.quantity || 1,
+    price: fields.price || '',
+    address: fields.address || '',
+    department: fields.department || '',
+    city: fields.city || '',
+    neighborhood: fields.neighborhood || '',
+    deliveryType: fields.deliveryType || 'domicilio',
+    transportadora: fields.transportadora || '',
+    status: fields.status || 'pendiente',
+    source: fields.source || 'manual', // 'ia' | 'manual'
+    rawSummary: fields.rawSummary || '',
+    dropiStatus: null,
+    skydropxStatus: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  orders.push(order);
+  saveOrders();
+  io.emit('orderUpdate', { order });
+  return order;
+}
+
+function updateOrder(id, fields) {
+  const order = orders.find((o) => o.id === id);
+  if (!order) return null;
+  Object.assign(order, fields, { updatedAt: Date.now() });
+  saveOrders();
+  io.emit('orderUpdate', { order });
+  return order;
 }
 
 // Recuerda los IDs de los mensajes que el PROPIO bot mandó (no los del
