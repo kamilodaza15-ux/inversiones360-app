@@ -50,6 +50,7 @@ body {
 .app-shell {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -159,6 +160,7 @@ body {
   flex-direction: column;
   min-width: 0;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -174,7 +176,9 @@ body {
 
 .main-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 20px;
 }
 .main-scroll.no-scroll { overflow: hidden; padding: 0; display: flex; }
@@ -194,9 +198,14 @@ body {
 .badge.qr { background: #3b82f6; }
 .badge.connected { background: #22c55e; }
 
-.tab-content { display: none; height: 100%; }
-.tab-content.active { display: block; animation: fadeIn 0.15s ease; }
-.tab-content.active.flex-fill { display: flex; flex-direction: column; }
+.tab-content { display: none; }
+.tab-content.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  animation: fadeIn 0.15s ease;
+}
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .card {
@@ -361,8 +370,10 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   gap: 12px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 8px;
   height: 100%;
+  min-height: 0;
 }
 .board-column {
   min-width: 240px;
@@ -372,6 +383,7 @@ input:focus, select:focus, textarea:focus {
   padding: 10px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 .board-column-header {
   font-weight: 700;
@@ -380,8 +392,9 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   justify-content: space-between;
   padding: 0 2px;
+  flex-shrink: 0;
 }
-.board-cards { overflow-y: auto; flex: 1; }
+.board-cards { overflow-y: auto; -webkit-overflow-scrolling: touch; flex: 1; min-height: 0; }
 .board-card {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
@@ -400,11 +413,12 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* ---------- Chats ---------- */
-.chats-layout { display: flex; height: 100%; width: 100%; }
+.chats-layout { display: flex; height: 100%; width: 100%; min-height: 0; }
 .chats-sidebar {
   width: 280px;
   flex-shrink: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   border-right: 1px solid var(--border-color);
   padding: 16px;
   background: var(--bg-card);
@@ -414,6 +428,7 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   padding: 16px 20px;
 }
 .client-list-item {
@@ -436,10 +451,13 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .chat-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 14px 4px;
   display: flex;
   flex-direction: column;
@@ -482,13 +500,149 @@ input:focus, select:focus, textarea:focus {
   padding: 11px 14px;
   cursor: pointer;
   background: var(--bg-hover);
+  color: var(--text-primary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
   font-weight: 600;
+  font-size: 0.95rem;
+}
+#recordVoiceBtn.recording {
+  background: #ef4444;
+  color: white;
+  border-color: #ef4444;
+  animation: recordPulse 1.2s infinite;
+}
+@keyframes recordPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 @media (max-width: 700px) {
   .sidebar { width: 56px; }
-  .chats-sidebar { width: 220px; }
   .price-row { flex-direction: column; gap: 0; }
+}
+
+/* ---------- Filtros (chips) ---------- */
+.filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.filter-chip {
+  border: 1px solid var(--border-color);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.filter-chip.active {
+  background: var(--accent-green);
+  border-color: var(--accent-green);
+  color: white;
+}
+
+/* ---------- Panel derecho (Chats) ---------- */
+.chats-right-panel {
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-color);
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.right-panel-top {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.right-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+}
+.rp-section {
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+.rp-section:first-child { padding-top: 0; margin-top: 0; border-top: none; }
+
+/* ---------- Ventanas modales (Cerrar pedido manual / Detalle de pedido) ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal-box {
+  background: var(--bg-card);
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+}
+
+/* ---------- Pedidos ---------- */
+.pedidos-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.stat-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 12px;
+}
+.stat-card b { display: block; font-size: 1.3rem; }
+.stat-card span { font-size: 0.75rem; color: var(--text-secondary); }
+
+.pedidos-table-wrap { overflow-x: auto; }
+.pedidos-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.pedidos-table th {
+  text-align: left;
+  padding: 10px;
+  color: var(--text-secondary);
+  border-bottom: 2px solid var(--border-color);
+  white-space: nowrap;
+}
+.pedidos-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+.pedidos-table tr { cursor: pointer; }
+.pedidos-table tr:hover td { background: var(--bg-hover); }
+
+/* ---------- Responsivo (celular) ---------- */
+.mobile-only { display: none; }
+
+@media (max-width: 860px) {
+  .sidebar { width: 0; border: none; }
+  .sidebar:hover, .sidebar.pinned { width: 230px; }
+  .chats-layout { position: relative; }
+  .chats-sidebar, .chats-main, .chats-right-panel {
+    width: 100% !important;
+    border: none;
+  }
+  .chats-sidebar { display: none; }
+  .chats-sidebar.mobile-visible { display: block; }
+  .chats-main { display: none; }
+  .chats-main.mobile-visible { display: flex; }
+  .chats-right-panel { display: none !important; }
+  .chats-right-panel.mobile-visible { display: flex !important; }
+
+  .mobile-only { display: block; width: 100%; margin-bottom: 10px; }
+
+  .board-column { min-width: 200px; }
 }
