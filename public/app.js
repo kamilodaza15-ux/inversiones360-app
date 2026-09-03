@@ -36,6 +36,19 @@ function initApp() {
 
 const socket = io();
 
+// ---------- Notificaciones "toast" (reemplazan los alert() feos) ----------
+function showToast(message, type = 'success') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'toastOut 0.2s ease forwards';
+    setTimeout(() => toast.remove(), 200);
+  }, 3500);
+}
+
 // ---------- Aviso de actualización disponible (arriba del panel) ----------
 // Se revisa solo, apenas se abre la app (en el navegador o dentro de Electron).
 async function checkUpdateBannerOnLoad() {
@@ -212,7 +225,7 @@ fetch('/api/network-info')
 const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
   'responseDelaySeconds', 'notificationPhoneNumber', 'pauseDurationMinutes', 'aiProvider', 'groqApiKey',
-  'openaiApiKey',
+  'openaiApiKey', 'autoUploadProvider',
 ];
 // groqModel y openaiModel se manejan aparte porque son selects con opción
 // "otro personalizado" (por si el modelo que quieren no está en la lista).
@@ -258,13 +271,41 @@ async function loadConfig() {
   // Compatibilidad: si alguien tenía la versión vieja con voiceEnabled (true/false),
   // lo traducimos automáticamente a voiceMode la primera vez que carga.
   document.getElementById('cfg-voiceMode').value = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
+  document.getElementById('cfg-confirmOrderDataBeforeClosing').checked = !!cfg.confirmOrderDataBeforeClosing;
   document.getElementById('cfg-minimaxApiKey').value = cfg.minimaxApiKey || '';
   document.getElementById('cfg-minimaxGroupId').value = cfg.minimaxGroupId || '';
   updateVoiceCloneStatus(cfg);
   setupModelSelect('cfg-groqModel', 'cfg-groqModel-custom', cfg.groqModel);
   setupModelSelect('cfg-openaiModel', 'cfg-openaiModel-custom', cfg.openaiModel);
+
+  if (!cfg.onboardingCompleted) {
+    document.getElementById('onboardingOverlay').style.display = 'flex';
+  }
 }
 loadConfig();
+
+// ---------- Asistente de configuración inicial (onboarding) ----------
+function showOnboardingStep(n) {
+  [1, 2, 3, 4].forEach((i) => {
+    document.getElementById(`onboardingStep${i}`).style.display = i === n ? 'block' : 'none';
+  });
+}
+async function finishOnboarding() {
+  document.getElementById('onboardingOverlay').style.display = 'none';
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ onboardingCompleted: true }),
+  });
+}
+document.getElementById('onboardingStartBtn').addEventListener('click', () => showOnboardingStep(2));
+document.getElementById('onboardingStep2NextBtn').addEventListener('click', () => showOnboardingStep(3));
+document.getElementById('onboardingStep3NextBtn').addEventListener('click', () => showOnboardingStep(4));
+document.getElementById('onboardingGoConfigBtn').addEventListener('click', () => document.querySelector('.nav-item[data-tab="config"]').click());
+document.getElementById('onboardingGoInicioBtn').addEventListener('click', () => document.querySelector('.nav-item[data-tab="inicio"]').click());
+document.getElementById('onboardingGoProductosBtn').addEventListener('click', () => document.querySelector('.nav-item[data-tab="productos"]').click());
+document.getElementById('onboardingFinishBtn').addEventListener('click', finishOnboarding);
+document.getElementById('onboardingSkipBtn').addEventListener('click', finishOnboarding);
 
 document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   const body = {};
@@ -274,6 +315,7 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   });
   body.groqModel = getModelValue('cfg-groqModel', 'cfg-groqModel-custom');
   body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
+  body.confirmOrderDataBeforeClosing = document.getElementById('cfg-confirmOrderDataBeforeClosing').checked;
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -469,12 +511,42 @@ let clientsCache = [];
 let productsCacheForRp = [];
 let activeTagFilter = 'todos';
 let activeDateFilter = 'todas';
+let clientSearchText = '';
+let customDateRange = null; // { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' } | null
+let activeBoardDateFilter = 'todas';
+let boardCustomDateRange = null;
+
+const AVATAR_COLORS = ['#3b82f6', '#f97316', '#16a34a', '#a855f7', '#ec4899', '#0ea5e9', '#eab308', '#ef4444'];
+function getInitials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || name[0].toUpperCase();
+}
+function getAvatarColor(seed) {
+  const str = String(seed || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+function avatarHtml(name, phone, size = 36) {
+  const initials = getInitials(name || phone);
+  const color = getAvatarColor(name || phone);
+  return `<div class="avatar" style="background:${color};width:${size}px;height:${size}px;font-size:${size * 0.38}px">${initials}</div>`;
+}
 
 function formatTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
-function isWithinDateFilter(ts, filter) {
+function isWithinDateFilter(ts, filter, customRange) {
+  const range = customRange !== undefined ? customRange : customDateRange;
+  if (range && range.from && range.to) {
+    if (!ts) return false;
+    const t = new Date(ts).setHours(0, 0, 0, 0);
+    const from = new Date(range.from).setHours(0, 0, 0, 0);
+    const to = new Date(range.to).setHours(23, 59, 59, 999);
+    return t >= from && t <= to;
+  }
   if (!ts || filter === 'todas') return true;
   const d = new Date(ts);
   const now = new Date();
@@ -490,6 +562,10 @@ function isWithinDateFilter(ts, filter) {
 }
 
 async function loadClients() {
+  const listDiv = document.getElementById('clientList');
+  if (listDiv && !clientsCache.length) {
+    listDiv.innerHTML = `<div style="text-align:center;padding:20px"><span class="loading-spinner"></span></div>`;
+  }
   clientsCache = await fetch('/api/clients').then((r) => r.json());
   renderBoard();
   renderClientList();
@@ -497,6 +573,20 @@ async function loadClients() {
 
 document.getElementById('refreshClientsBtn').addEventListener('click', loadClients);
 document.getElementById('refreshBoardBtn').addEventListener('click', loadClients);
+
+document.querySelectorAll('#boardDateFilters .filter-chip[data-board-date]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#boardDateFilters .filter-chip').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeBoardDateFilter = btn.dataset.boardDate;
+    boardCustomDateRange = null;
+    renderBoard();
+  });
+});
+setupDateRangePicker('boardDateRangeBtn', 'boardDateRangePicker', 'boardDateFrom', 'boardDateTo', 'boardDateRangeApplyBtn', '#boardDateFilters .filter-chip', (range) => {
+  boardCustomDateRange = range;
+  renderBoard();
+});
 
 document.querySelectorAll('#chatsTagFilters .filter-chip').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -506,13 +596,44 @@ document.querySelectorAll('#chatsTagFilters .filter-chip').forEach((btn) => {
     renderClientList();
   });
 });
-document.querySelectorAll('#chatsDateFilters .filter-chip').forEach((btn) => {
+document.querySelectorAll('#chatsDateFilters .filter-chip[data-filter-date]').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('#chatsDateFilters .filter-chip').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
     activeDateFilter = btn.dataset.filterDate;
+    customDateRange = null;
     renderClientList();
   });
+});
+document.getElementById('chatSearchInput').addEventListener('input', (e) => {
+  clientSearchText = e.target.value;
+  renderClientList();
+});
+
+// ---- Calendario de rango de fechas (reutilizable en Chats, Pedidos y Tableros) ----
+function setupDateRangePicker(btnId, pickerId, fromId, toId, applyId, chipsSelector, onApply) {
+  const btn = document.getElementById(btnId);
+  const picker = document.getElementById(pickerId);
+  if (!btn || !picker) return;
+  btn.addEventListener('click', () => {
+    picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+  });
+  document.getElementById(applyId).addEventListener('click', () => {
+    const from = document.getElementById(fromId).value;
+    const to = document.getElementById(toId).value;
+    if (!from || !to) {
+      showToast('Elige las dos fechas (desde y hasta)', 'error');
+      return;
+    }
+    document.querySelectorAll(chipsSelector).forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    onApply({ from, to });
+    picker.style.display = 'none';
+  });
+}
+setupDateRangePicker('chatsDateRangeBtn', 'chatsDateRangePicker', 'chatsDateFrom', 'chatsDateTo', 'chatsDateRangeApplyBtn', '#chatsDateFilters .filter-chip', (range) => {
+  customDateRange = range;
+  renderClientList();
 });
 
 // ---- Vista de Tablero ----
@@ -520,8 +641,9 @@ function renderBoard() {
   const container = document.getElementById('crmBoardColumns');
   if (!container) return;
   container.innerHTML = '';
+  const dateFiltered = clientsCache.filter((c) => isWithinDateFilter(c.lastMessageAt, activeBoardDateFilter, boardCustomDateRange));
   STATUS_COLUMNS.forEach((col) => {
-    const clientsInCol = clientsCache.filter((c) => c.status === col.key);
+    const clientsInCol = dateFiltered.filter((c) => c.status === col.key);
     const colDiv = document.createElement('div');
     colDiv.className = 'board-column';
     colDiv.innerHTML = `
@@ -531,6 +653,9 @@ function renderBoard() {
       <div class="board-cards"></div>
     `;
     const cardsDiv = colDiv.querySelector('.board-cards');
+    if (clientsInCol.length === 0) {
+      cardsDiv.innerHTML = `<div class="empty-state" style="padding:16px 8px"><span class="empty-icon" style="font-size:1.3rem">📭</span>Nadie aquí todavía</div>`;
+    }
     clientsInCol
       .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0))
       .forEach((c) => {
@@ -541,8 +666,13 @@ function renderBoard() {
           (s) => `<option value="${s.key}" ${s.key === c.status ? 'selected' : ''}>${s.label}</option>`
         ).join('');
         card.innerHTML = `
-          <div class="board-card-name">${c.name || c.phone}</div>
-          <div class="board-card-meta">${formatTime(c.lastMessageAt)}${isPausedNow ? ' · ⏸️ pausado' : ''}</div>
+          <div class="avatar-row">
+            ${avatarHtml(c.name, c.phone, 26)}
+            <div style="min-width:0;flex:1">
+              <div class="board-card-name">${c.name || c.phone}</div>
+              <div class="board-card-meta">${formatTime(c.lastMessageAt)}${isPausedNow ? ' · ⏸️ pausado' : ''}</div>
+            </div>
+          </div>
           <select data-jid="${c.jid}">${optionsHtml}</select>
         `;
         card.querySelector('.board-card-name').addEventListener('click', () => {
@@ -568,19 +698,32 @@ function renderBoard() {
 function renderClientList() {
   const listDiv = document.getElementById('clientList');
   if (!listDiv) return;
-  listDiv.innerHTML = '';
-  clientsCache
+  const searchLower = clientSearchText.trim().toLowerCase();
+  const filtered = clientsCache
     .filter((c) => activeTagFilter === 'todos' || (c.tag || 'lead') === activeTagFilter)
     .filter((c) => isWithinDateFilter(c.lastMessageAt, activeDateFilter))
-    .forEach((c) => {
+    .filter((c) => !searchLower || (c.name || '').toLowerCase().includes(searchLower) || (c.phone || '').includes(searchLower));
+
+  listDiv.innerHTML = '';
+  if (filtered.length === 0) {
+    listDiv.innerHTML = `<div class="empty-state"><span class="empty-icon">📭</span>No hay clientes que coincidan con este filtro.</div>`;
+    return;
+  }
+
+  filtered.forEach((c) => {
       const statusInfo = STATUS_LABELS[c.status] || { label: c.status, color: '#6b7280' };
       const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
       const item = document.createElement('div');
       item.className = 'client-list-item' + (c.jid === selectedClientJid ? ' selected' : '');
       item.innerHTML = `
-        <div class="name">${c.name || c.phone}</div>
-        <div class="meta" style="color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
-        <div class="time">${formatTime(c.lastMessageAt)}</div>
+        <div class="avatar-row">
+          ${avatarHtml(c.name, c.phone, 32)}
+          <div style="min-width:0;flex:1">
+            <div class="name">${c.name || c.phone}</div>
+            <div class="meta" style="color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
+            <div class="time">${formatTime(c.lastMessageAt)}</div>
+          </div>
+        </div>
       `;
       item.addEventListener('click', () => {
         selectClient(c.jid);
@@ -648,6 +791,7 @@ function renderRightPanel(client) {
   document.getElementById('rpName').textContent = client.name || client.phone;
   document.getElementById('rpPhone').textContent = client.phone;
   document.getElementById('rpTag').value = tag;
+  document.getElementById('rpNotes').value = client.notes || '';
 
   const statusSelect = document.getElementById('rpStatusSelect');
   statusSelect.innerHTML = STATUS_COLUMNS.map(
@@ -689,6 +833,16 @@ document.getElementById('rpTag').addEventListener('change', async (e) => {
   });
 });
 
+document.getElementById('rpSaveNotesBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes: document.getElementById('rpNotes').value }),
+  });
+  showToast('Nota guardada.');
+});
+
 document.getElementById('rpStatusSelect').addEventListener('change', async (e) => {
   if (!selectedClientJid) return;
   await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/status`, {
@@ -717,13 +871,13 @@ document.getElementById('rpActivateBotBtn').addEventListener('click', async () =
   const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/activate-bot`, { method: 'POST' }).then((r) => r.json());
   btn.disabled = false;
   btn.textContent = '🤖 Activar bot (re-disparar último mensaje)';
-  if (!res.ok) alert(res.error || 'No se pudo activar el bot');
+  if (!res.ok) showToast(res.error || 'No se pudo activar el bot', 'error');
 });
 
 document.getElementById('rpActivateProductBtn').addEventListener('click', async () => {
   if (!selectedClientJid) return;
   const productId = document.getElementById('rpProductSelect').value;
-  if (!productId) return alert('Elige un producto primero');
+  if (!productId) return showToast('Elige un producto primero', 'error');
   const btn = document.getElementById('rpActivateProductBtn');
   btn.disabled = true;
   const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/activate-product`, {
@@ -732,14 +886,7 @@ document.getElementById('rpActivateProductBtn').addEventListener('click', async 
     body: JSON.stringify({ productId }),
   }).then((r) => r.json());
   btn.disabled = false;
-  if (!res.ok) alert(res.error || 'No se pudo activar el asistente');
-});
-
-document.getElementById('rpConfirmOrderBtn').addEventListener('click', async () => {
-  if (!selectedClientJid) return;
-  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/confirm-order`, { method: 'POST' }).then((r) => r.json());
-  if (res.error) return alert(res.error);
-  alert(`Pedido ${res.id} creado. Ábrelo desde la pestaña Pedidos para revisarlo antes de subirlo.`);
+  if (!res.ok) showToast(res.error || 'No se pudo activar el asistente', 'error');
 });
 
 document.getElementById('rpManualOrderBtn').addEventListener('click', () => {
@@ -777,7 +924,7 @@ document.getElementById('saveManualOrderBtn').addEventListener('click', async ()
     }),
   }).then((r) => r.json());
   document.getElementById('manualOrderOverlay').style.display = 'none';
-  alert(`Pedido ${res.id} creado.`);
+  showToast(`Pedido ${res.id} creado.`);
 });
 
 document.getElementById('rpDeleteChatBtn').addEventListener('click', () => deleteSelectedChat(selectedClientJid));
@@ -787,7 +934,7 @@ async function deleteSelectedChat(jid) {
   const label = client?.name || client?.phone || jid.split('@')[0];
   if (!confirm(`¿Borrar TODA la conversación con ${label}? Esto borra el chat, la memoria de la IA, y su estado en el CRM. No se puede deshacer.`)) return;
   const res = await fetch(`/api/clients/${encodeURIComponent(jid)}`, { method: 'DELETE' }).then((r) => r.json());
-  if (!res.ok) return alert(res.error || 'No se pudo borrar el chat');
+  if (!res.ok) return showToast(res.error || 'No se pudo borrar el chat', 'error');
   selectedClientJid = null;
   document.getElementById('chatHeader').textContent = 'Selecciona un cliente de la lista →';
   document.getElementById('chatMessages').innerHTML = '';
@@ -806,7 +953,7 @@ document.getElementById('chatSendBtn').addEventListener('click', async () => {
     const formData = new FormData();
     formData.append('media', mediaFile);
     const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send-media`, { method: 'POST', body: formData }).then((r) => r.json());
-    if (!res.ok) alert(res.error || 'No se pudo enviar el archivo');
+    if (!res.ok) showToast(res.error || 'No se pudo enviar el archivo', 'error');
     document.getElementById('chatMediaInput').value = '';
   }
 
@@ -817,7 +964,7 @@ document.getElementById('chatSendBtn').addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     }).then((r) => r.json());
-    if (!res.ok) alert(res.error || 'No se pudo enviar');
+    if (!res.ok) showToast(res.error || 'No se pudo enviar', 'error');
   }
 });
 document.getElementById('chatReplyInput').addEventListener('keydown', (e) => {
@@ -841,7 +988,7 @@ const recordBtn = document.getElementById('recordVoiceBtn');
 
 recordBtn.addEventListener('click', async () => {
   if (!selectedClientJid) {
-    alert('Selecciona un cliente primero');
+    showToast('Selecciona un cliente primero', 'error');
     return;
   }
   if (mediaRecorder && mediaRecorder.state === 'recording') {
@@ -874,9 +1021,9 @@ recordBtn.addEventListener('click', async () => {
           method: 'POST',
           body: formData,
         }).then((r) => r.json());
-        if (!res.ok) alert(res.error || 'No se pudo enviar la nota de voz');
+        if (!res.ok) showToast(res.error || 'No se pudo enviar la nota de voz', 'error');
       } catch (err) {
-        alert('Error de conexión al enviar la nota de voz.');
+        showToast('Error de conexión al enviar la nota de voz.', 'error');
       } finally {
         recordBtn.disabled = false;
       }
@@ -893,8 +1040,9 @@ recordBtn.addEventListener('click', async () => {
       recordBtn.textContent = `⏹️ ${mm}:${ss}`;
     }, 500);
   } catch (err) {
-    alert(
-      'No se pudo acceder al micrófono. Si estás entrando desde otro dispositivo por la IP de red (no localhost), el navegador bloquea el micrófono por seguridad — usa la PC directamente, o configura HTTPS.'
+    showToast(
+      'No se pudo acceder al micrófono. Si estás entrando desde otro dispositivo por la IP de red (no localhost), el navegador bloquea el micrófono por seguridad — usa la PC directamente, o configura HTTPS.',
+      'error'
     );
   }
 });
@@ -949,10 +1097,16 @@ loadClients();
 // ---------- Pedidos ----------
 let ordersCache = [];
 let activeOrderDateFilter = 'todas';
+let ordersCustomDateRange = null;
 let editingOrderId = null;
+let orderSearchText = '';
+let selectedOrderIds = new Set();
 
 async function loadOrders() {
+  const tbody = document.getElementById('pedidosTableBody');
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:24px"><span class="loading-spinner"></span></td></tr>`;
   ordersCache = await fetch('/api/orders').then((r) => r.json());
+  selectedOrderIds.clear();
   renderOrderStats();
   renderOrdersTable();
 }
@@ -962,13 +1116,23 @@ document.getElementById('orderStatusFilter').innerHTML +=
   STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
 document.getElementById('orderStatusFilter').addEventListener('change', renderOrdersTable);
 
+document.getElementById('orderSearchInput').addEventListener('input', (e) => {
+  orderSearchText = e.target.value;
+  renderOrdersTable();
+});
+
 document.querySelectorAll('[data-order-date]').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-order-date]').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
     activeOrderDateFilter = btn.dataset.orderDate;
+    ordersCustomDateRange = null;
     renderOrdersTable();
   });
+});
+setupDateRangePicker('ordersDateRangeBtn', 'ordersDateRangePicker', 'ordersDateFrom', 'ordersDateTo', 'ordersDateRangeApplyBtn', '[data-order-date]', (range) => {
+  ordersCustomDateRange = range;
+  renderOrdersTable();
 });
 
 function renderOrderStats() {
@@ -984,29 +1148,99 @@ function renderOrderStats() {
     STATUS_COLUMNS.map((s) => `<div class="stat-card" style="color:${s.color}"><b>${counts[s.key] || 0}</b><span>${s.label}</span></div>`).join('');
 }
 
+function getFilteredOrders() {
+  const statusFilter = document.getElementById('orderStatusFilter').value;
+  const searchLower = orderSearchText.trim().toLowerCase();
+  return ordersCache
+    .filter((o) => !statusFilter || o.status === statusFilter)
+    .filter((o) => isWithinDateFilter(o.createdAt, activeOrderDateFilter, ordersCustomDateRange))
+    .filter(
+      (o) =>
+        !searchLower ||
+        (o.clientName || '').toLowerCase().includes(searchLower) ||
+        (o.clientPhone || '').includes(searchLower) ||
+        o.id.toLowerCase().includes(searchLower)
+    );
+}
+
 function renderOrdersTable() {
   const tbody = document.getElementById('pedidosTableBody');
-  const statusFilter = document.getElementById('orderStatusFilter').value;
+  const filtered = getFilteredOrders();
   tbody.innerHTML = '';
-  ordersCache
-    .filter((o) => !statusFilter || o.status === statusFilter)
-    .filter((o) => isWithinDateFilter(o.createdAt, activeOrderDateFilter))
-    .forEach((o) => {
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><span class="empty-icon">🧾</span>No hay pedidos que coincidan con este filtro.</div></td></tr>`;
+    updateOrdersBulkBar();
+    return;
+  }
+
+  filtered.forEach((o) => {
       const statusInfo = STATUS_COLUMNS.find((s) => s.key === o.status) || { label: o.status || 'pendiente', color: '#f59e0b' };
       const tr = document.createElement('tr');
+      const dupWarning = o.possibleDuplicateOf ? ` <span title="Posible duplicado de ${o.possibleDuplicateOf}">⚠️</span>` : '';
       tr.innerHTML = `
-        <td>${o.id}</td>
+        <td><input type="checkbox" class="order-checkbox" data-id="${o.id}" ${selectedOrderIds.has(o.id) ? 'checked' : ''} /></td>
+        <td>${o.id}${dupWarning}</td>
         <td>${formatTime(o.createdAt)}</td>
-        <td>${o.clientName || o.clientPhone || '-'}</td>
+        <td><div class="avatar-row">${avatarHtml(o.clientName, o.clientPhone, 24)}<span>${o.clientName || o.clientPhone || '-'}</span></div></td>
         <td>${o.product || '-'}</td>
         <td>${o.city || '-'}</td>
         <td>${o.price || '-'}</td>
         <td style="color:${statusInfo.color}">${statusInfo.label}</td>
       `;
+      tr.querySelector('.order-checkbox').addEventListener('click', (e) => e.stopPropagation());
+      tr.querySelector('.order-checkbox').addEventListener('change', (e) => {
+        if (e.target.checked) selectedOrderIds.add(o.id);
+        else selectedOrderIds.delete(o.id);
+        updateOrdersBulkBar();
+      });
       tr.addEventListener('click', () => openOrderDetail(o.id));
       tbody.appendChild(tr);
     });
+  updateOrdersBulkBar();
 }
+
+// ---- Selección múltiple en Pedidos ----
+document.getElementById('ordersSelectAllCheckbox').addEventListener('change', (e) => {
+  const filtered = getFilteredOrders();
+  if (e.target.checked) filtered.forEach((o) => selectedOrderIds.add(o.id));
+  else filtered.forEach((o) => selectedOrderIds.delete(o.id));
+  renderOrdersTable();
+});
+
+document.getElementById('ordersBulkStatusSelect').innerHTML =
+  `<option value="pendiente">🟡 Pendiente</option>` + STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
+
+function updateOrdersBulkBar() {
+  const bar = document.getElementById('ordersBulkBar');
+  const count = selectedOrderIds.size;
+  bar.classList.toggle('visible', count > 0);
+  document.getElementById('ordersSelectedCount').textContent = `${count} seleccionado${count === 1 ? '' : 's'}`;
+}
+
+document.getElementById('ordersBulkDeleteBtn').addEventListener('click', async () => {
+  if (!confirm(`¿Eliminar ${selectedOrderIds.size} pedido(s) seleccionados? No se puede deshacer.`)) return;
+  await Promise.all(Array.from(selectedOrderIds).map((id) => fetch(`/api/orders/${id}`, { method: 'DELETE' })));
+  showToast(`${selectedOrderIds.size} pedido(s) eliminados.`);
+  selectedOrderIds.clear();
+  loadOrders();
+});
+
+document.getElementById('ordersBulkChangeStatusBtn').addEventListener('click', async () => {
+  const newStatus = document.getElementById('ordersBulkStatusSelect').value;
+  await Promise.all(
+    Array.from(selectedOrderIds).map((id) =>
+      fetch(`/api/orders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+    )
+  );
+  showToast(`Estado actualizado en ${selectedOrderIds.size} pedido(s).`);
+  selectedOrderIds.clear();
+  loadOrders();
+});
 
 function openOrderDetail(id) {
   const order = ordersCache.find((o) => o.id === id);
@@ -1060,6 +1294,11 @@ document.getElementById('saveOrderBtn').addEventListener('click', async () => {
   loadOrders();
 });
 
+document.getElementById('downloadPdfBtn').addEventListener('click', () => {
+  if (!editingOrderId) return;
+  window.open(`/api/orders/${editingOrderId}/pdf`, '_blank');
+});
+
 document.getElementById('deleteOrderBtn').addEventListener('click', async () => {
   if (!editingOrderId) return;
   if (!confirm(`¿Eliminar el pedido ${editingOrderId}? No se puede deshacer.`)) return;
@@ -1088,6 +1327,36 @@ document.getElementById('uploadSkydropxBtn').addEventListener('click', async () 
 });
 
 socket.on('orderUpdate', () => loadOrders());
+
+// ---- Exportar a Excel (CSV, se abre directo en Excel) ----
+document.getElementById('exportOrdersExcelBtn').addEventListener('click', () => {
+  const rows = getFilteredOrders();
+  if (rows.length === 0) {
+    showToast('No hay pedidos para exportar con este filtro.', 'error');
+    return;
+  }
+  const headers = ['Pedido', 'Fecha', 'Cliente', 'Teléfono', 'Producto', 'Cantidad', 'Precio', 'Dirección', 'Departamento', 'Ciudad', 'Barrio', 'Transportadora', 'Estado'];
+  const csvRows = [headers.join(',')];
+  rows.forEach((o) => {
+    const statusInfo = STATUS_COLUMNS.find((s) => s.key === o.status);
+    const line = [
+      o.id, formatTime(o.createdAt), o.clientName, o.clientPhone, o.product, o.quantity, o.price,
+      o.address, o.department, o.city, o.neighborhood, o.transportadora, statusInfo ? statusInfo.label : (o.status || 'Pendiente'),
+    ].map((v) => `"${String(v || '').replace(/"/g, '""')}"`);
+    csvRows.push(line.join(','));
+  });
+  // El \uFEFF (BOM) al inicio es para que Excel reconozca bien los acentos/ñ.
+  const csvContent = '\uFEFF' + csvRows.join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `pedidos-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`${rows.length} pedido(s) exportados.`);
+});
+
 loadOrders();
 
 // ---------- Respaldo (exportar / importar productos y configuración) ----------
@@ -1244,6 +1513,7 @@ async function loadProducts() {
       document.getElementById('p-priceBefore').value = p.priceBefore || '';
       document.getElementById('p-priceAfter').value = p.priceAfter || '';
       document.getElementById('p-keywords').value = (p.keywords || []).join(', ');
+      document.getElementById('p-dropiProductId').value = p.dropiProductId || '';
       document.getElementById('p-details').value = p.details;
       document.getElementById('p-video-current').textContent = p.video
         ? '🎥 Ya tiene un video cargado. Elige otro archivo aquí solo si quieres reemplazarlo.'
@@ -1276,6 +1546,7 @@ productForm.addEventListener('submit', async (e) => {
   formData.append('priceBefore', document.getElementById('p-priceBefore').value);
   formData.append('priceAfter', document.getElementById('p-priceAfter').value);
   formData.append('keywords', document.getElementById('p-keywords').value);
+  formData.append('dropiProductId', document.getElementById('p-dropiProductId').value);
   formData.append('details', document.getElementById('p-details').value);
   const imageFiles = document.getElementById('p-images').files;
   for (const file of imageFiles) formData.append('images', file);
@@ -1287,12 +1558,221 @@ productForm.addEventListener('submit', async (e) => {
   const res = await fetch(url, { method, body: formData });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    alert(err.error || 'No se pudo guardar el producto (revisa el tamaño/tipo del video).');
+    showToast(err.error || 'No se pudo guardar el producto (revisa el tamaño/tipo del video).', 'error');
     return;
   }
 
   resetProductForm();
   loadProducts();
+});
+
+// ---------- Secuencia de seguimiento (remarketing) ----------
+let followUpMessagesState = [];
+
+function renderFollowUpMessages() {
+  const container = document.getElementById('followUpMessagesList');
+  container.innerHTML = '';
+  followUpMessagesState.forEach((msg, i) => {
+    const row = document.createElement('div');
+    row.className = 'followup-row';
+    row.innerHTML = `
+      <div class="followup-row-top">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;flex:1">
+          <input type="checkbox" class="fu-enabled" style="width:auto" ${msg.enabled !== false ? 'checked' : ''} />
+          Mensaje ${i + 1}
+        </label>
+        <input type="number" class="fu-delay followup-delay" min="1" value="${msg.delayMinutes}" title="Minutos de espera" />
+        <span class="hint small" style="margin:0">min después</span>
+        <button type="button" class="cancel-btn fu-delete" style="margin:0;color:#dc2626">🗑️</button>
+      </div>
+      <textarea class="fu-text" rows="2">${msg.text}</textarea>
+    `;
+    row.querySelector('.fu-delete').addEventListener('click', () => {
+      followUpMessagesState.splice(i, 1);
+      renderFollowUpMessages();
+    });
+    container.appendChild(row);
+  });
+}
+
+document.getElementById('addFollowUpMessageBtn').addEventListener('click', () => {
+  followUpMessagesState.push({
+    id: `seguimiento-custom-${Date.now()}`,
+    text: '¿Sigues interesado en {producto}? 😊',
+    delayMinutes: 60,
+    enabled: true,
+  });
+  renderFollowUpMessages();
+});
+
+async function loadFollowUpConfig() {
+  const data = await fetch('/api/followup-config').then((r) => r.json());
+  document.getElementById('followUpEnabled').checked = data.enabled;
+  document.getElementById('followUpHoursStart').value = data.hoursStart || '';
+  document.getElementById('followUpHoursEnd').value = data.hoursEnd || '';
+  followUpMessagesState = data.messages;
+  renderFollowUpMessages();
+}
+loadFollowUpConfig();
+
+document.getElementById('saveFollowUpBtn').addEventListener('click', async () => {
+  // Vuelve a leer los valores actuales de cada fila (por si el usuario los editó) antes de guardar.
+  const rows = document.querySelectorAll('#followUpMessagesList .followup-row');
+  const messages = Array.from(rows).map((row, i) => ({
+    id: followUpMessagesState[i].id,
+    text: row.querySelector('.fu-text').value,
+    delayMinutes: Number(row.querySelector('.fu-delay').value) || 60,
+    enabled: row.querySelector('.fu-enabled').checked,
+  }));
+
+  await fetch('/api/followup-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: document.getElementById('followUpEnabled').checked,
+      hoursStart: document.getElementById('followUpHoursStart').value,
+      hoursEnd: document.getElementById('followUpHoursEnd').value,
+      messages,
+    }),
+  });
+  followUpMessagesState = messages;
+  const saved = document.getElementById('followUpSaved');
+  saved.textContent = 'Guardado ✔';
+  setTimeout(() => (saved.textContent = ''), 2000);
+});
+
+// ---------- Dashboard ----------
+async function loadDashboard() {
+  const [clientsData, ordersData] = await Promise.all([
+    fetch('/api/clients').then((r) => r.json()),
+    fetch('/api/orders').then((r) => r.json()),
+  ]);
+
+  const totalLeads = clientsData.length;
+  const clientesConvertidos = clientsData.filter((c) => (c.tag || 'lead') === 'cliente').length;
+  const conversionRate = totalLeads ? Math.round((clientesConvertidos / totalLeads) * 100) : 0;
+
+  const now = new Date();
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const ordersToday = ordersData.filter((o) => startOfDay(new Date(o.createdAt)) === startOfDay(now)).length;
+  const ordersWeek = ordersData.filter((o) => o.createdAt >= now.getTime() - 7 * 24 * 60 * 60 * 1000).length;
+
+  const statsDiv = document.getElementById('dashboardStats');
+  statsDiv.innerHTML = `
+    <div class="stat-card"><b>${totalLeads}</b><span>Total de clientes</span></div>
+    <div class="stat-card" style="color:#16a34a"><b>${conversionRate}%</b><span>Tasa de conversión</span></div>
+    <div class="stat-card" style="color:#3b82f6"><b>${ordersToday}</b><span>Pedidos hoy</span></div>
+    <div class="stat-card" style="color:#f97316"><b>${ordersWeek}</b><span>Pedidos esta semana</span></div>
+  `;
+
+  // ---- Ventas de los últimos 7 días ----
+  const weekChart = document.getElementById('dashboardWeekChart');
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    days.push(d);
+  }
+  const dayCounts = days.map((d) => ordersData.filter((o) => startOfDay(new Date(o.createdAt)) === startOfDay(d)).length);
+  const maxCount = Math.max(1, ...dayCounts);
+  weekChart.innerHTML = days
+    .map((d, i) => {
+      const label = d.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric' });
+      const pct = Math.round((dayCounts[i] / maxCount) * 100);
+      return `
+        <div class="bar-row">
+          <span class="bar-label">${label}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <span class="bar-value">${dayCounts[i]}</span>
+        </div>
+      `;
+    })
+    .join('');
+
+  // ---- Productos más vendidos ----
+  const productCounts = {};
+  ordersData.forEach((o) => {
+    if (!o.product) return;
+    productCounts[o.product] = (productCounts[o.product] || 0) + 1;
+  });
+  const topProducts = Object.entries(productCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const topDiv = document.getElementById('dashboardTopProducts');
+  if (topProducts.length === 0) {
+    topDiv.innerHTML = `<div class="empty-state"><span class="empty-icon">📦</span>Todavía no hay pedidos con producto registrado.</div>`;
+  } else {
+    const maxProductCount = topProducts[0][1];
+    topDiv.innerHTML = topProducts
+      .map(([name, count]) => {
+        const pct = Math.round((count / maxProductCount) * 100);
+        return `
+          <div class="bar-row">
+            <span class="bar-label" style="width:160px" title="${name}">${name.length > 22 ? name.slice(0, 22) + '…' : name}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+            <span class="bar-value">${count}</span>
+          </div>
+        `;
+      })
+      .join('');
+  }
+}
+document.getElementById('refreshDashboardBtn').addEventListener('click', loadDashboard);
+document.querySelector('.nav-item[data-tab="dashboard"]').addEventListener('click', loadDashboard);
+
+// ---------- Simulador de pruebas ----------
+function appendSimulatorBubble(from, text, mediaList) {
+  const container = document.getElementById('simulatorMessages');
+  const bubble = document.createElement('div');
+  const labels = { client: 'Tú (probando)', bot: 'Ángela' };
+  bubble.className = `chat-bubble ${from}`;
+  let mediaHtml = '';
+  (mediaList || []).forEach((m) => {
+    if (m.type === 'image') mediaHtml += `<img src="${m.url}" />`;
+    else if (m.type === 'video') mediaHtml += `<video controls src="${m.url}" style="max-width:220px;border-radius:8px;display:block;margin-top:4px"></video>`;
+  });
+  bubble.innerHTML = `
+    <div class="bubble-meta">${labels[from] || from}</div>
+    <div>${(text || '').replace(/</g, '&lt;')}</div>
+    ${mediaHtml}
+  `;
+  container.appendChild(bubble);
+  container.scrollTop = container.scrollHeight;
+}
+
+async function sendSimulatorMessage() {
+  const input = document.getElementById('simulatorInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  appendSimulatorBubble('client', text);
+
+  const sendBtn = document.getElementById('simulatorSendBtn');
+  sendBtn.disabled = true;
+  try {
+    const res = await fetch('/api/simulator/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).then((r) => r.json());
+    if (res.ok) {
+      appendSimulatorBubble('bot', res.reply, res.media);
+    } else {
+      showToast(res.error || 'Error en la simulación', 'error');
+    }
+  } catch (err) {
+    showToast('Error de conexión con el simulador.', 'error');
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+document.getElementById('simulatorSendBtn').addEventListener('click', sendSimulatorMessage);
+document.getElementById('simulatorInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendSimulatorMessage();
+});
+document.getElementById('resetSimulatorBtn').addEventListener('click', async () => {
+  await fetch('/api/simulator/reset', { method: 'POST' });
+  document.getElementById('simulatorMessages').innerHTML = '';
+  showToast('Simulador reiniciado.');
 });
 
 }
