@@ -38,6 +38,8 @@
       <div class="nav-item" data-tab="chats"><span class="nav-icon">💬</span><span class="nav-label">Chats</span></div>
       <div class="nav-item" data-tab="tableros"><span class="nav-icon">📋</span><span class="nav-label">Tableros</span></div>
       <div class="nav-item" data-tab="pedidos"><span class="nav-icon">🧾</span><span class="nav-label">Pedidos</span></div>
+      <div class="nav-item" data-tab="dashboard"><span class="nav-icon">📊</span><span class="nav-label">Dashboard</span></div>
+      <div class="nav-item" data-tab="simulador"><span class="nav-icon">🧪</span><span class="nav-label">Simulador</span></div>
 
       <div class="sidebar-footer">
         <button class="theme-toggle-btn" id="themeToggleBtn">
@@ -108,6 +110,20 @@
             <input id="cfg-pauseDurationMinutes" type="number" min="1" max="1440" placeholder="10" />
             <p class="hint small">Si escribes manualmente en un chat (desde tu celular o desde la pestaña Chats), el bot deja de responder ahí por este tiempo. Puedes reanudarlo antes desde la pestaña Chats.</p>
 
+            <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+              <input id="cfg-confirmOrderDataBeforeClosing" type="checkbox" style="width:auto" />
+              Antes de cerrar un pedido, que la IA repita los datos y espere que el cliente confirme
+            </label>
+            <p class="hint small">Si está apagado (por defecto), el pedido se cierra apenas la ficha de datos esté completa, sin pedir una confirmación extra.</p>
+
+            <label>Subida automática de pedidos nuevos</label>
+            <select id="cfg-autoUploadProvider">
+              <option value="off">🔒 Apagado — subir manual con el botón del pedido</option>
+              <option value="dropi">🚀 Automático a Dropi</option>
+              <option value="skydropx">🚀 Automático a Skydropx</option>
+            </select>
+            <p class="hint small">Necesita que la API de Dropi/Skydropx esté configurada y conectada — mientras tanto, aunque lo actives, va a avisar que falta la conexión, sin romper nada.</p>
+
             <h2>Proveedor de IA</h2>
             <label>Proveedor</label>
             <select id="cfg-aiProvider">
@@ -147,6 +163,36 @@
 
             <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
             <span id="configSaved" class="saved-msg"></span>
+          </div>
+
+          <div class="card">
+            <h2>Secuencia de seguimiento (remarketing)</h2>
+            <p class="hint small">Si un cliente pregunta por un producto y se queda callado sin comprar, el bot le puede escribir solo, unas horas después, para recordarle la oferta.</p>
+            <p class="hint small"><b>(Recomendado: máximo 2-3 mensajes, para evitar riesgo de baneo de WhatsApp)</b></p>
+
+            <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+              <input id="followUpEnabled" type="checkbox" style="width:auto" />
+              Activar la secuencia de seguimiento
+            </label>
+
+            <div class="price-row" style="margin-top:14px">
+              <div>
+                <label>Horario permitido — desde</label>
+                <input id="followUpHoursStart" type="time" />
+              </div>
+              <div>
+                <label>Horario permitido — hasta</label>
+                <input id="followUpHoursEnd" type="time" />
+              </div>
+            </div>
+            <p class="hint small">Deja los dos vacíos para que no tenga restricción de horario. Este horario solo aplica a estos mensajes de seguimiento — el bot sigue respondiendo 24/7 a cualquiera que le escriba.</p>
+
+            <label style="margin-top:14px">Mensajes de la secuencia (usa <code>{producto}</code> — se rellena solo con el producto de cada cliente)</label>
+            <div id="followUpMessagesList"></div>
+            <button id="addFollowUpMessageBtn" class="cancel-btn" style="width:100%">➕ Agregar mensaje</button>
+
+            <button id="saveFollowUpBtn" class="save-btn" style="margin-top:14px">Guardar secuencia de seguimiento</button>
+            <span id="followUpSaved" class="saved-msg"></span>
           </div>
 
           <div class="card">
@@ -232,6 +278,10 @@
               <label>Palabras clave (separadas por coma)</label>
               <input id="p-keywords" type="text" placeholder="magnesio, calambres, dormir" />
 
+              <label>ID de producto en Dropi (opcional)</label>
+              <input id="p-dropiProductId" type="text" placeholder="Ej. 123456" />
+              <p class="hint small">Por ahora este campo solo se guarda — cuando conectemos la API de Dropi, va a poder traer el nombre/fotos/descripción automático desde aquí.</p>
+
               <label>Detalle completo (para que la IA venda bien este producto)</label>
               <textarea id="p-details" rows="6"></textarea>
 
@@ -259,6 +309,7 @@
       <section id="tab-chats" class="tab-content">
         <div class="chats-layout">
           <div class="chats-sidebar">
+            <input id="chatSearchInput" type="text" class="search-box" placeholder="🔍 Buscar por nombre o número..." />
             <div class="filter-row" id="chatsTagFilters">
               <button class="filter-chip active" data-filter-tag="todos">Todos</button>
               <button class="filter-chip" data-filter-tag="lead">🆕 Lead</button>
@@ -271,6 +322,12 @@
               <button class="filter-chip" data-filter-date="hoy">Hoy</button>
               <button class="filter-chip" data-filter-date="ayer">Ayer</button>
               <button class="filter-chip" data-filter-date="7dias">7 días</button>
+              <button class="filter-chip" id="chatsDateRangeBtn">📅</button>
+            </div>
+            <div id="chatsDateRangePicker" style="display:none;margin-bottom:8px">
+              <input type="date" id="chatsDateFrom" style="width:auto;display:inline-block" />
+              <input type="date" id="chatsDateTo" style="width:auto;display:inline-block" />
+              <button id="chatsDateRangeApplyBtn" class="cancel-btn" style="margin-top:6px;width:100%">Aplicar rango</button>
             </div>
             <button id="refreshClientsBtn" class="cancel-btn" style="width:100%;margin-top:8px">🔄 Actualizar</button>
             <div id="clientList" style="margin-top:12px"></div>
@@ -306,6 +363,11 @@
             </div>
             <div class="right-panel-scroll">
               <div class="rp-section">
+                <label style="margin-top:0">Nota interna (solo tú la ves, nunca la IA ni el cliente)</label>
+                <textarea id="rpNotes" rows="3" placeholder="Ej. Pidió que lo llamemos después de las 6pm"></textarea>
+                <button id="rpSaveNotesBtn" class="cancel-btn" style="width:100%">💾 Guardar nota</button>
+              </div>
+              <div class="rp-section">
                 <div id="rpAiStatus" class="hint small">🤖 La IA está respondiendo aquí</div>
                 <label>Pausar la IA</label>
                 <select id="rpPauseSelect">
@@ -334,8 +396,8 @@
               </div>
 
               <div class="rp-section">
-                <button id="rpConfirmOrderBtn" class="save-btn" style="width:100%;margin-top:0">✅ Confirmar y subir a Pedidos</button>
-                <button id="rpManualOrderBtn" class="cancel-btn" style="width:100%">📝 Cerrar pedido (manual)</button>
+                <p class="hint small" style="margin-top:0">Cuando la IA cierra una venta, el pedido aparece solo en la pestaña Pedidos — no hace falta ningún clic aquí.</p>
+                <button id="rpManualOrderBtn" class="cancel-btn" style="width:100%;margin-top:0">📝 Cerrar pedido (manual)</button>
               </div>
 
               <div class="rp-section">
@@ -383,9 +445,21 @@
 
       <section id="tab-tableros" class="tab-content">
         <div style="padding:20px;height:100%;min-height:0;display:flex;flex-direction:column">
-          <div style="display:flex;align-items:center;margin-bottom:12px;flex-shrink:0">
+          <div style="display:flex;align-items:center;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap;gap:8px">
             <h2 style="margin:0">Tablero de clientes</h2>
+            <div class="filter-row" id="boardDateFilters" style="margin:0 0 0 16px">
+              <button class="filter-chip active" data-board-date="todas">Todas</button>
+              <button class="filter-chip" data-board-date="hoy">Hoy</button>
+              <button class="filter-chip" data-board-date="ayer">Ayer</button>
+              <button class="filter-chip" data-board-date="7dias">7 días</button>
+              <button class="filter-chip" id="boardDateRangeBtn">📅</button>
+            </div>
             <button id="refreshBoardBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">🔄 Actualizar</button>
+          </div>
+          <div id="boardDateRangePicker" style="display:none;margin-bottom:10px;flex-shrink:0">
+            <input type="date" id="boardDateFrom" style="width:auto;display:inline-block" />
+            <input type="date" id="boardDateTo" style="width:auto;display:inline-block" />
+            <button id="boardDateRangeApplyBtn" class="cancel-btn" style="margin-top:0">Aplicar rango</button>
           </div>
           <div id="crmBoardColumns" class="board-columns"></div>
         </div>
@@ -395,25 +469,44 @@
         <div class="main-scroll">
           <div style="display:flex;align-items:center;margin-bottom:14px">
             <h2 style="margin:0">Pedidos</h2>
+            <button id="exportOrdersExcelBtn" class="cancel-btn" style="margin-top:0">📊 Exportar a Excel</button>
             <button id="refreshOrdersBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">🔄 Actualizar</button>
           </div>
 
-          <div class="filter-row" style="margin-bottom:14px">
+          <input id="orderSearchInput" type="text" class="search-box" placeholder="🔍 Buscar por nombre, teléfono o N° de pedido..." />
+
+          <div class="filter-row" style="margin-bottom:6px">
             <button class="filter-chip active" data-order-date="todas">Todas las fechas</button>
             <button class="filter-chip" data-order-date="hoy">Hoy</button>
             <button class="filter-chip" data-order-date="ayer">Ayer</button>
             <button class="filter-chip" data-order-date="7dias">7 días</button>
+            <button class="filter-chip" id="ordersDateRangeBtn">📅</button>
             <select id="orderStatusFilter" style="width:auto;padding:8px 10px">
               <option value="">Todos los estados</option>
             </select>
           </div>
+          <div id="ordersDateRangePicker" style="display:none;margin-bottom:10px">
+            <input type="date" id="ordersDateFrom" style="width:auto;display:inline-block" />
+            <input type="date" id="ordersDateTo" style="width:auto;display:inline-block" />
+            <button id="ordersDateRangeApplyBtn" class="cancel-btn" style="margin-top:0">Aplicar rango</button>
+          </div>
 
           <div id="pedidosStats" class="pedidos-stats"></div>
+
+          <div id="ordersBulkBar" class="bulk-action-bar">
+            <span id="ordersSelectedCount">0 seleccionados</span>
+            <select id="ordersBulkStatusSelect" style="width:auto"></select>
+            <button id="ordersBulkChangeStatusBtn" class="cancel-btn" style="margin-top:0">Cambiar estado</button>
+            <button id="ordersBulkDeleteBtn" class="cancel-btn" style="margin-top:0;color:#dc2626">🗑️ Eliminar seleccionados</button>
+          </div>
 
           <div class="pedidos-table-wrap">
             <table class="pedidos-table">
               <thead>
-                <tr><th>Pedido</th><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Ciudad</th><th>Total</th><th>Estado</th></tr>
+                <tr>
+                  <th><input type="checkbox" id="ordersSelectAllCheckbox" /></th>
+                  <th>Pedido</th><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Ciudad</th><th>Total</th><th>Estado</th>
+                </tr>
               </thead>
               <tbody id="pedidosTableBody"></tbody>
             </table>
@@ -457,6 +550,7 @@
           <select id="od-status"></select>
 
           <button id="saveOrderBtn" class="save-btn">Guardar cambios</button>
+          <button id="downloadPdfBtn" class="cancel-btn">📄 Descargar comprobante PDF</button>
           <button id="deleteOrderBtn" class="cancel-btn" style="color:#dc2626">🗑️ Eliminar pedido</button>
 
           <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color)">
@@ -467,9 +561,75 @@
         </div>
       </div>
 
+      <section id="tab-dashboard" class="tab-content">
+        <div class="main-scroll"><div class="inner-narrow">
+          <div style="display:flex;align-items:center;margin-bottom:16px">
+            <h2 style="margin:0">📊 Dashboard</h2>
+            <button id="refreshDashboardBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">🔄 Actualizar</button>
+          </div>
+          <div id="dashboardStats" class="pedidos-stats"></div>
+
+          <div class="card">
+            <h2>Ventas de los últimos 7 días</h2>
+            <div id="dashboardWeekChart"></div>
+          </div>
+
+          <div class="card">
+            <h2>Productos más vendidos</h2>
+            <div id="dashboardTopProducts"></div>
+          </div>
+        </div></div>
+      </section>
+
+      <section id="tab-simulador" class="tab-content">
+        <div style="padding:20px;height:100%;min-height:0;display:flex;flex-direction:column;max-width:700px;margin:0 auto;width:100%">
+          <div style="display:flex;align-items:center;margin-bottom:10px;flex-shrink:0">
+            <h2 style="margin:0">🧪 Simulador de pruebas</h2>
+            <button id="resetSimulatorBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">🔄 Reiniciar conversación</button>
+          </div>
+          <p class="hint small" style="flex-shrink:0">Escribe como si fueras un cliente — la IA responde con el mismo prompt y catálogo reales, pero nada de esto se manda a WhatsApp ni toca tus clientes o pedidos reales.</p>
+          <div id="simulatorMessages" class="chat-messages" style="flex:1;min-height:0;margin-top:10px"></div>
+          <div class="chat-input-row">
+            <input id="simulatorInput" type="text" placeholder="Escribe como si fueras el cliente..." />
+            <button id="simulatorSendBtn" class="save-btn" style="margin-top:0">Enviar</button>
+          </div>
+        </div>
+      </section>
+
       <footer class="dev-credit">Desarrollado por Juan Camilo Ramírez</footer>
     </div>
   </div>
+  </div>
+
+  <div id="toastContainer"></div>
+
+  <div id="onboardingOverlay" class="modal-overlay" style="display:none">
+    <div class="modal-box" style="max-width:440px;text-align:center">
+      <div id="onboardingStep1">
+        <h2>👋 ¡Bienvenido a Inversiones 360 CHAT!</h2>
+        <p class="hint">Vamos a dejar todo listo en 3 pasos rápidos: tu clave de IA, conectar WhatsApp, y tu primer producto.</p>
+        <button class="start-btn" id="onboardingStartBtn">Empezar</button>
+      </div>
+      <div id="onboardingStep2" style="display:none">
+        <h2>1️⃣ Clave de IA (Groq)</h2>
+        <p class="hint">Necesitas una clave gratis de Groq para que la IA pueda responder. Ve a Configuración y pégala ahí — es gratis y toma un minuto.</p>
+        <button class="cancel-btn" id="onboardingGoConfigBtn">Ir a Configuración</button>
+        <button class="save-btn" id="onboardingStep2NextBtn">Ya la agregué, siguiente</button>
+      </div>
+      <div id="onboardingStep3" style="display:none">
+        <h2>2️⃣ Conectar WhatsApp</h2>
+        <p class="hint">En la pestaña Inicio, dale a "Iniciar asistente" y escanea el código QR con tu WhatsApp Business.</p>
+        <button class="cancel-btn" id="onboardingGoInicioBtn">Ir a Inicio</button>
+        <button class="save-btn" id="onboardingStep3NextBtn">Ya lo conecté, siguiente</button>
+      </div>
+      <div id="onboardingStep4" style="display:none">
+        <h2>3️⃣ Tu primer producto</h2>
+        <p class="hint">En la pestaña Productos, agrega el primero que vas a vender — nombre, precio, y de qué se trata.</p>
+        <button class="cancel-btn" id="onboardingGoProductosBtn">Ir a Productos</button>
+        <button class="save-btn" id="onboardingFinishBtn">¡Ya está! Terminar</button>
+      </div>
+      <p class="hint small" id="onboardingSkipBtn" style="cursor:pointer;text-decoration:underline;margin-top:16px">Saltar este tutorial</p>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
