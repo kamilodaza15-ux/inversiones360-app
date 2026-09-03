@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.21.1';
+const CURRENT_VERSION = '1.23.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -48,6 +48,7 @@ const CLIENTS_PATH = path.join(DATA_DIR, 'clients.json');
 const CHAT_LOGS_PATH = path.join(DATA_DIR, 'chat-logs.json');
 const PAUSED_CHATS_PATH = path.join(DATA_DIR, 'paused-chats.json');
 const ORDERS_PATH = path.join(DATA_DIR, 'orders.json');
+const COLOMBIA_DATA_PATH = path.join(__dirname, 'colombia.json');
 const SESSION_DIR = path.join(__dirname, 'session');
 
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -469,6 +470,7 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
     priceBefore: req.body.priceBefore || '',
     priceAfter: req.body.priceAfter || '',
     details: req.body.details || '',
+    dropiProductId: req.body.dropiProductId || '',
     images: (files.images || []).map((f) => `/media/${f.filename}`),
     video: (files.video || [])[0] ? `/media/${files.video[0].filename}` : '',
   };
@@ -492,6 +494,7 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
     priceBefore: req.body.priceBefore ?? existing.priceBefore,
     priceAfter: req.body.priceAfter ?? existing.priceAfter,
     details: req.body.details ?? existing.details,
+    dropiProductId: req.body.dropiProductId ?? (existing.dropiProductId || ''),
     keywords:
       req.body.keywords !== undefined
         ? req.body.keywords.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean)
@@ -543,6 +546,17 @@ app.post('/api/clients/:jid/tag', (req, res) => {
   if (!rec) return res.status(404).json({ error: 'Cliente no encontrado' });
   rec.tag = tag;
   rec.tagManual = true;
+  clients.set(jid, rec);
+  saveClients();
+  io.emit('clientUpdate', { jid, client: rec });
+  res.json({ ok: true });
+});
+
+app.post('/api/clients/:jid/notes', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const rec = clients.get(jid);
+  if (!rec) return res.status(404).json({ error: 'Cliente no encontrado' });
+  rec.notes = req.body.notes || '';
   clients.set(jid, rec);
   saveClients();
   io.emit('clientUpdate', { jid, client: rec });
@@ -755,7 +769,7 @@ app.post('/api/clients/:jid/activate-product', async (req, res) => {
   try {
     resumeChat(jid);
     if (!conversations.has(jid)) {
-      conversations.set(jid, [{ role: 'system', content: buildSystemPrompt() }]);
+      conversations.set(jid, [{ role: 'system', content: buildSystemPrompt(jid) }]);
     }
     const history = conversations.get(jid);
     history.push({
@@ -770,8 +784,63 @@ app.post('/api/clients/:jid/activate-product', async (req, res) => {
 });
 
 // ---------- API: Pedidos ----------
+app.get('/api/colombia', (req, res) => res.json(colombiaData));
+
 app.get('/api/orders', (req, res) => {
   res.json([...orders].sort((a, b) => b.createdAt - a.createdAt));
+});
+
+// Comprobante en PDF de un pedido — con el nombre de empresa que tengas en
+// Configuración, así que si lo cambias ahí, el comprobante se actualiza solo.
+app.get('/api/orders/:id/pdf', (req, res) => {
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+  const cfg = readConfig();
+  const PDFDocument = require('pdfkit');
+  const doc = new PDFDocument({ margin: 50 });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="comprobante-${order.id}.pdf"`);
+  doc.pipe(res);
+
+  doc.fontSize(20).fillColor('#16a34a').text(cfg.companyName || 'Comprobante de pedido', { align: 'center' });
+  doc.moveDown(0.3);
+  doc.fontSize(11).fillColor('#6b7280').text('Comprobante de pedido', { align: 'center' });
+  doc.moveDown(1.5);
+
+  doc.fontSize(14).fillColor('#111827').text(`Pedido: ${order.id}`);
+  doc.fontSize(10).fillColor('#6b7280').text(`Fecha: ${new Date(order.createdAt).toLocaleString('es-CO')}`);
+  doc.moveDown(1);
+
+  const statusInfo = ORDER_STATUS_LABELS[order.status] || order.status;
+  doc.fontSize(12).fillColor('#111827').text('Cliente', { underline: true });
+  doc.fontSize(10).fillColor('#374151');
+  doc.text(`Nombre: ${order.clientName || '-'}`);
+  doc.text(`Teléfono: ${order.clientPhone || '-'}`);
+  doc.moveDown(0.8);
+
+  doc.fontSize(12).fillColor('#111827').text('Entrega', { underline: true });
+  doc.fontSize(10).fillColor('#374151');
+  doc.text(`Tipo: ${order.deliveryType === 'oficina' ? 'Recogida en oficina' : 'Domicilio'}`);
+  if (order.deliveryType !== 'oficina') doc.text(`Dirección: ${order.address || '-'}`);
+  doc.text(`Ciudad: ${order.city || '-'}${order.department ? ', ' + order.department : ''}`);
+  if (order.neighborhood) doc.text(`Barrio: ${order.neighborhood}`);
+  doc.moveDown(0.8);
+
+  doc.fontSize(12).fillColor('#111827').text('Producto', { underline: true });
+  doc.fontSize(10).fillColor('#374151');
+  doc.text(`${order.product || '-'}  x${order.quantity || 1}`);
+  doc.text(`Precio: ${order.price || '-'}`);
+  doc.moveDown(0.8);
+
+  doc.fontSize(12).fillColor('#111827').text('Estado', { underline: true });
+  doc.fontSize(10).fillColor('#374151').text(statusInfo);
+
+  doc.moveDown(2);
+  doc.fontSize(9).fillColor('#9ca3af').text(`Generado por ${cfg.companyName || 'Inversiones 360 CHAT'}`, { align: 'center' });
+
+  doc.end();
 });
 
 app.post('/api/orders', (req, res) => {
@@ -799,25 +868,18 @@ app.delete('/api/orders/:id', (req, res) => {
 // ese cliente (guardado cuando dijo "ORDEN DE COMPRA REGISTRADA") y lo
 // convierte en un Pedido de verdad, con los datos prellenados — quedan
 // editables antes de mandarlos a Dropi/Skydropx.
-app.post('/api/clients/:jid/confirm-order', (req, res) => {
+app.post('/api/clients/:jid/confirm-order', async (req, res) => {
   const jid = decodeURIComponent(req.params.jid);
   const client = clients.get(jid);
   if (!client || !client.lastOrderSummary) {
     return res.status(400).json({ error: 'Este cliente todavía no tiene un pedido detectado por la IA' });
   }
-  const summary = client.lastOrderSummary;
-  const order = createOrder({
-    clientJid: jid,
-    clientName: client.name || extractNameFromOrderText(summary) || '',
-    clientPhone: client.phone,
-    product: extractProductFromOrderText(summary) || '',
-    price: extractPriceFromOrderText(summary) || '',
-    address: extractAddressFromOrderText(summary) || '',
-    city: extractCityFromOrderText(summary) || '',
-    status: 'pendiente',
-    source: 'ia',
-    rawSummary: summary,
-  });
+  // Normalmente esto ya pasa solo apenas la IA cierra la venta — este
+  // endpoint queda como respaldo manual por si algo falló en el momento.
+  const order = await autoCreateOrderFromSummary(jid, client, client.lastOrderSummary);
+  if (!order) {
+    return res.status(400).json({ error: 'Ya existe un pedido creado para esta venta — revísalo en la pestaña Pedidos.' });
+  }
   res.json(order);
 });
 
@@ -847,32 +909,277 @@ app.post('/api/clients/:jid/manual-order', (req, res) => {
 // Botones "Subir a Dropi" / "Subir a Skydropx" — quedan conectados al panel
 // desde ya, pero avisan honestamente que falta la documentación/credenciales
 // reales de cada API antes de poder crear la guía de verdad.
-app.post('/api/orders/:id/upload-dropi', async (req, res) => {
-  const order = orders.find((o) => o.id === req.params.id);
-  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+// Estas dos funciones quedan listas para conectar la API real de cada
+// plataforma en cuanto tengamos su documentación — por ahora, avisan
+// honestamente que falta la conexión, sin romper nada más de la app.
+async function uploadOrderToDropi(order) {
   const cfg = readConfig();
   if (!cfg.dropiApiKey) {
-    return res.status(400).json({
-      error: 'Falta configurar la API de Dropi (todavía no tenemos la documentación/credenciales conectadas).',
-    });
+    throw new Error('Falta configurar la API de Dropi (todavía no tenemos la documentación/credenciales conectadas).');
   }
   // TODO: cuando tengamos la documentación real de la API de Dropi, aquí va
   // la llamada real para crear la orden/guía.
-  res.status(501).json({ error: 'La conexión real con Dropi todavía no está implementada.' });
+  throw new Error('La conexión real con Dropi todavía no está implementada.');
+}
+
+async function uploadOrderToSkydropx(order) {
+  const cfg = readConfig();
+  if (!cfg.skydropxApiKey) {
+    throw new Error('Falta configurar la API de Skydropx (todavía no tenemos la documentación/credenciales conectadas).');
+  }
+  // TODO: cuando tengamos la documentación real de la API de Skydropx, aquí
+  // va la llamada real para crear el envío/guía.
+  throw new Error('La conexión real con Skydropx todavía no está implementada.');
+}
+
+// Si el interruptor de subida automática está encendido, se llama sola apenas
+// se crea un pedido nuevo — sin que nadie tenga que ir a darle clic. Falla
+// en silencio (solo queda en el log) mientras no tengamos la API real, para
+// no interrumpir el resto del flujo del pedido.
+async function autoUploadIfEnabled(order) {
+  const cfg = readConfig();
+  if (cfg.autoUploadProvider === 'dropi') {
+    try {
+      await uploadOrderToDropi(order);
+      io.emit('log', `🚀 Pedido ${order.id} subido automático a Dropi`);
+    } catch (err) {
+      io.emit('log', `⚠️ No se pudo subir automático a Dropi (${order.id}): ${err.message}`);
+    }
+  } else if (cfg.autoUploadProvider === 'skydropx') {
+    try {
+      await uploadOrderToSkydropx(order);
+      io.emit('log', `🚀 Pedido ${order.id} subido automático a Skydropx`);
+    } catch (err) {
+      io.emit('log', `⚠️ No se pudo subir automático a Skydropx (${order.id}): ${err.message}`);
+    }
+  }
+}
+
+app.post('/api/orders/:id/upload-dropi', async (req, res) => {
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+  try {
+    await uploadOrderToDropi(order);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.post('/api/orders/:id/upload-skydropx', async (req, res) => {
   const order = orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
-  const cfg = readConfig();
-  if (!cfg.skydropxApiKey) {
-    return res.status(400).json({
-      error: 'Falta configurar la API de Skydropx (todavía no tenemos la documentación/credenciales conectadas).',
-    });
+  try {
+    await uploadOrderToSkydropx(order);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  // TODO: cuando tengamos la documentación real de la API de Skydropx, aquí
-  // va la llamada real para crear el envío/guía.
-  res.status(501).json({ error: 'La conexión real con Skydropx todavía no está implementada.' });
+});
+
+// ---------- Simulador de pruebas ----------
+// Usa el mismo "cerebro" (prompt, catálogo, herramientas) que el bot real,
+// pero NUNCA toca WhatsApp, ni clientes reales, ni pedidos reales — es una
+// conversación aislada, solo para probar cambios al prompt con calma.
+function emptySimOrderData() {
+  return {
+    nombre: '', telefono: '', direccion: '', departamento: '',
+    ciudad: '', barrio: '', producto: '', cantidad: '', tipoEntrega: '',
+  };
+}
+let simulationSession = { history: [], orderData: emptySimOrderData() };
+
+app.post('/api/simulator/message', async (req, res) => {
+  const text = (req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Escribe un mensaje' });
+  try {
+    if (simulationSession.history.length === 0) {
+      simulationSession.history.push({ role: 'system', content: '' });
+    }
+    simulationSession.history[0] = {
+      role: 'system',
+      content: buildSystemPrompt(null, simulationSession.orderData),
+    };
+    simulationSession.history.push({ role: 'user', content: text });
+
+    let aiMessage = await getAIMessage(simulationSession.history, [
+      productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool,
+    ]);
+    const mediaPreview = [];
+
+    if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+      simulationSession.history.push({
+        role: 'assistant',
+        content: aiMessage.content || null,
+        tool_calls: aiMessage.tool_calls,
+      });
+
+      for (const toolCall of aiMessage.tool_calls) {
+        let args = {};
+        try {
+          args = JSON.parse(toolCall.function.arguments || '{}');
+        } catch (e) {}
+
+        let resultText = 'No se encontró el producto solicitado.';
+        if (toolCall.function.name === 'enviar_imagen_producto') {
+          const product = findProductByQuery(args.producto);
+          if (product && product.images?.length) {
+            mediaPreview.push(...product.images.map((url) => ({ type: 'image', url })));
+            resultText = `Imagen(es) de "${product.name}" mostradas en la simulación (no se envían a ningún WhatsApp real).`;
+          } else {
+            resultText = 'No hay imágenes disponibles para ese producto.';
+          }
+        } else if (toolCall.function.name === 'enviar_video_producto') {
+          const product = findProductByQuery(args.producto);
+          if (product && product.video) {
+            mediaPreview.push({ type: 'video', url: product.video });
+            resultText = `Video de "${product.name}" mostrado en la simulación (no se envía a ningún WhatsApp real).`;
+          } else {
+            resultText = 'Ese producto no tiene un video cargado.';
+          }
+        } else if (toolCall.function.name === 'actualizar_datos_pedido') {
+          const fields = ['nombre', 'telefono', 'direccion', 'departamento', 'ciudad', 'barrio', 'producto', 'cantidad', 'tipoEntrega'];
+          fields.forEach((f) => {
+            if (args[f] !== undefined && args[f] !== null && String(args[f]).trim() !== '') {
+              simulationSession.orderData[f] = String(args[f]).trim();
+            }
+          });
+          resultText = `Datos guardados (solo en esta simulación, no toca clientes reales). ${describeMissingOrderFields(simulationSession.orderData)}`;
+        } else if (toolCall.function.name === 'consultar_estado_pedido') {
+          resultText = 'En el simulador no hay pedidos reales que consultar — esto es solo una prueba.';
+        }
+
+        simulationSession.history.push({ role: 'tool', tool_call_id: toolCall.id, content: resultText });
+      }
+
+      aiMessage = await getAIMessage(simulationSession.history);
+    }
+
+    const reply = (aiMessage.content || '').trim() || 'Listo 😊';
+    simulationSession.history.push({ role: 'assistant', content: reply });
+
+    res.json({ ok: true, reply, media: mediaPreview, orderData: simulationSession.orderData });
+  } catch (err) {
+    res.status(500).json({ error: 'Error en la simulación: ' + err.message });
+  }
+});
+
+app.post('/api/simulator/reset', (req, res) => {
+  simulationSession = { history: [], orderData: emptySimOrderData() };
+  res.json({ ok: true });
+});
+
+// ---------- Secuencia de seguimiento / remarketing ----------
+// Mensajes por defecto — quedan editables desde el panel, esto solo se usa
+// si el negocio nunca ha guardado los suyos propios.
+const DEFAULT_FOLLOWUP_MESSAGES = [
+  {
+    id: 'seguimiento-1',
+    text: '¡Hola! 😊 ¿Sigues interesado en {producto}? Recuerda que todavía tenemos el descuento activo si quieres aprovecharlo.',
+    delayMinutes: 30,
+    enabled: true,
+  },
+  {
+    id: 'seguimiento-2',
+    text: '¡Hola de nuevo! 👋 Te cuento que el descuento en {producto} está por terminar pronto — no te vayas a quedar sin el tuyo.',
+    delayMinutes: 210, // ~3.5 horas
+    enabled: true,
+  },
+  {
+    id: 'seguimiento-3',
+    text: 'Últimas unidades con descuento en {producto} 🙌 Si todavía te interesa, este es un buen momento para aprovecharlo antes de que se agote.',
+    delayMinutes: 1200, // al día siguiente (~20 horas)
+    enabled: true,
+  },
+];
+
+function isWithinBusinessHours(cfg) {
+  if (!cfg.followUpHoursStart || !cfg.followUpHoursEnd) return true; // sin horario configurado = siempre permitido
+  const now = new Date();
+  const [startH, startM] = cfg.followUpHoursStart.split(':').map(Number);
+  const [endH, endM] = cfg.followUpHoursEnd.split(':').map(Number);
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const startMinutes = startH * 60 + (startM || 0);
+  const endMinutes = endH * 60 + (endM || 0);
+  return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+}
+
+const NON_FOLLOWUP_STATUSES = [
+  'comprado', 'guia_generada', 'en_camino', 'con_novedad', 'entregado', 'devuelto', 'cancelado',
+];
+
+// Revisa a todos los clientes cada cierto rato — si alguno "se quedó callado"
+// después de que el bot le habló de un producto, y le toca el siguiente
+// mensaje de la secuencia (según el tiempo configurado), se lo manda solo.
+// Respeta el horario configurado, y nunca le escribe dos veces el mismo paso.
+async function checkFollowUps() {
+  const cfg = readConfig();
+  if (!cfg.followUpEnabled) return;
+  if (!sock) return; // el bot no está conectado, no hay cómo mandar nada
+  if (!isWithinBusinessHours(cfg)) return;
+
+  const messages = (cfg.followUpMessages && cfg.followUpMessages.length > 0)
+    ? cfg.followUpMessages
+    : DEFAULT_FOLLOWUP_MESSAGES;
+  const activeMessages = messages.filter((m) => m.enabled !== false).sort((a, b) => a.delayMinutes - b.delayMinutes);
+  if (activeMessages.length === 0) return;
+
+  for (const [jid, client] of clients.entries()) {
+    if (!client.orderData?.producto) continue; // sin saber qué producto le interesaba, no mandamos nada
+    if (NON_FOLLOWUP_STATUSES.includes(client.status)) continue; // ya compró, canceló, etc.
+    if (isPaused(jid)) continue; // no molestar si interviniste manualmente ahí
+
+    const log = chatLogs.get(jid) || [];
+    const lastEntry = log[log.length - 1];
+    if (!lastEntry || lastEntry.from !== 'bot') continue; // el cliente ya respondió, o no hay historial
+
+    const sentSteps = client.followUpsSent || [];
+    const elapsedMinutes = (Date.now() - lastEntry.timestamp) / 60000;
+
+    for (const msg of activeMessages) {
+      if (sentSteps.includes(msg.id)) continue;
+      if (elapsedMinutes < msg.delayMinutes) continue;
+
+      const text = msg.text.replace(/\{producto\}/g, client.orderData.producto);
+      try {
+        await sendAndTrack(jid, { text });
+        appendChatLog(jid, { from: 'bot', text, type: 'text', timestamp: Date.now() });
+        client.followUpsSent = [...sentSteps, msg.id];
+        clients.set(jid, client);
+        saveClients();
+        io.emit('log', `📨 Seguimiento enviado a ${jid.split('@')[0]}`);
+      } catch (e) {
+        console.error('Error enviando mensaje de seguimiento:', e);
+      }
+      break; // solo un paso de la secuencia por revisión, para no mandar varios de golpe
+    }
+  }
+}
+
+setInterval(() => {
+  checkFollowUps().catch((e) => console.error('Error revisando seguimientos:', e));
+}, 5 * 60 * 1000); // revisa cada 5 minutos
+
+app.get('/api/followup-config', (req, res) => {
+  const cfg = readConfig();
+  res.json({
+    enabled: !!cfg.followUpEnabled,
+    hoursStart: cfg.followUpHoursStart || '',
+    hoursEnd: cfg.followUpHoursEnd || '',
+    messages: (cfg.followUpMessages && cfg.followUpMessages.length > 0) ? cfg.followUpMessages : DEFAULT_FOLLOWUP_MESSAGES,
+  });
+});
+
+app.post('/api/followup-config', (req, res) => {
+  const cfg = readConfig();
+  writeConfig({
+    ...cfg,
+    followUpEnabled: !!req.body.enabled,
+    followUpHoursStart: req.body.hoursStart || '',
+    followUpHoursEnd: req.body.hoursEnd || '',
+    followUpMessages: req.body.messages || [],
+  });
+  res.json({ ok: true });
 });
 
 // ---------- IA: helpers de proveedor ----------
@@ -929,6 +1236,96 @@ const productVideoTool = {
   },
 };
 
+// ---- Herramienta: guardar/corregir datos del pedido, de a poco ----
+// La IA la llama CADA VEZ que el cliente da o corrige cualquiera de estos
+// datos, aunque sea uno solo — así queda guardado de verdad, en vez de que
+// la IA tenga que "recordarlo" solo leyendo el chat de atrás para adelante.
+const updateOrderDataTool = {
+  type: 'function',
+  function: {
+    name: 'actualizar_datos_pedido',
+    description:
+      'Guarda o corrige uno o varios datos del cliente para su pedido. Llámala cada vez que el cliente dé o corrija cualquiera de estos datos, aunque sea uno solo a la vez — no esperes a tener todos los datos para llamarla.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nombre: { type: 'string', description: 'Nombre completo del cliente' },
+        telefono: { type: 'string', description: 'Número de teléfono/celular que el cliente escribió (tal cual lo dio)' },
+        direccion: { type: 'string', description: 'Dirección completa, con nomenclatura (ej. Carrera 4 #3-40, o Manzana 15 Casa 27)' },
+        departamento: { type: 'string', description: 'Departamento de Colombia' },
+        ciudad: { type: 'string', description: 'Ciudad o municipio' },
+        barrio: { type: 'string', description: 'Barrio (opcional)' },
+        producto: { type: 'string', description: 'Producto que quiere comprar' },
+        cantidad: { type: 'string', description: 'Cantidad de unidades' },
+        tipoEntrega: { type: 'string', enum: ['domicilio', 'oficina'], description: 'Cómo prefiere recibirlo' },
+      },
+    },
+  },
+};
+
+// ---- Herramienta: consultar el estado real de un pedido ya existente ----
+const checkOrderStatusTool = {
+  type: 'function',
+  function: {
+    name: 'consultar_estado_pedido',
+    description:
+      'Consulta el estado real y actual de un pedido en la base de datos. Úsala cuando el cliente pregunte por el estado/seguimiento de un pedido que ya hizo (ej. "¿cómo va mi pedido?", "¿ya tiene guía?"). NUNCA inventes ni asumas un estado sin llamar esta función primero.',
+    parameters: {
+      type: 'object',
+      properties: {
+        numeroOrden: { type: 'string', description: 'El número de orden si el cliente lo dio (ej. ORD-0001). Si no lo dio, deja vacío.' },
+      },
+    },
+  },
+};
+
+// Cuando la IA llama actualizar_datos_pedido: solo actualiza los campos que
+// vinieron con valor (no borra los demás), y avanza el tipo de entrega si
+// vino. Devuelve un texto para que la IA sepa qué le falta todavía.
+function handleUpdateOrderData(jid, args) {
+  ensureClientRecord(jid);
+  const client = clients.get(jid);
+  const fields = ['nombre', 'telefono', 'direccion', 'departamento', 'ciudad', 'barrio', 'producto', 'cantidad', 'tipoEntrega'];
+  fields.forEach((f) => {
+    if (args[f] !== undefined && args[f] !== null && String(args[f]).trim() !== '') {
+      client.orderData[f] = String(args[f]).trim();
+    }
+  });
+  if (args.nombre) client.name = client.orderData.nombre; // también se ve en la lista de Chats
+  clients.set(jid, client);
+  saveClients();
+  io.emit('clientUpdate', { jid, client });
+  return `Datos guardados. ${describeMissingOrderFields(client.orderData)}`;
+}
+
+function describeMissingOrderFields(orderData) {
+  const required = orderData.tipoEntrega === 'oficina'
+    ? ['nombre', 'ciudad', 'departamento', 'telefono', 'producto', 'cantidad', 'tipoEntrega']
+    : ['nombre', 'direccion', 'ciudad', 'departamento', 'telefono', 'producto', 'cantidad', 'tipoEntrega'];
+  const missing = required.filter((f) => !orderData[f]);
+  return missing.length === 0
+    ? 'Ya están todos los datos necesarios completos.'
+    : `Todavía faltan: ${missing.join(', ')}.`;
+}
+
+// Cuando la IA llama consultar_estado_pedido: busca de verdad en Pedidos,
+// por número de orden si lo dio, o si no, el pedido más reciente de este
+// cliente. Nunca inventa el estado.
+function handleCheckOrderStatus(jid, args) {
+  let order = null;
+  if (args.numeroOrden) {
+    order = orders.find((o) => o.id.toLowerCase() === String(args.numeroOrden).trim().toLowerCase());
+  }
+  if (!order) {
+    const clientOrders = orders.filter((o) => o.clientJid === jid).sort((a, b) => b.createdAt - a.createdAt);
+    order = clientOrders[0] || null;
+  }
+  if (!order) return 'Este cliente no tiene ningún pedido registrado todavía.';
+
+  const statusLabel = ORDER_STATUS_LABELS[order.status] || order.status;
+  return `Pedido ${order.id}: producto "${order.product}", estado actual: ${statusLabel}.${order.transportadora ? ` Transportadora: ${order.transportadora}.` : ''}`;
+}
+
 // Genera y manda una respuesta de la IA para un cliente, asumiendo que su
 // historial (conversations) ya tiene el turno más reciente listo — se usa
 // tanto para "Activar bot (re-disparar último mensaje)" como para "Activar
@@ -939,7 +1336,7 @@ async function generateAndSendReply(userId) {
   const history = conversations.get(userId);
   if (!history) throw new Error('No hay conversación con este cliente todavía');
 
-  let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool]);
+  let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool]);
 
   if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
     history.push({
@@ -967,6 +1364,10 @@ async function generateAndSendReply(userId) {
         resultText = sent
           ? `Video de "${product.name}" enviado correctamente.`
           : 'Ese producto no tiene un video cargado.';
+      } else if (toolCall.function.name === 'actualizar_datos_pedido') {
+        resultText = handleUpdateOrderData(userId, args);
+      } else if (toolCall.function.name === 'consultar_estado_pedido') {
+        resultText = handleCheckOrderStatus(userId, args);
       }
 
       history.push({ role: 'tool', tool_call_id: toolCall.id, content: resultText });
@@ -1006,6 +1407,7 @@ async function generateAndSendReply(userId) {
   if (reply.includes('ORDEN DE COMPRA REGISTRADA')) {
     const name = extractNameFromOrderText(reply);
     updateClientStatus(userId, 'comprado', { lastOrderSummary: reply, ...(name ? { name } : {}) });
+    await autoCreateOrderFromSummary(userId, clients.get(userId), reply);
   }
   if (reply.includes('PEDIDO CANCELADO') && cfg.notificationPhoneNumber) {
     try {
@@ -1016,6 +1418,18 @@ async function generateAndSendReply(userId) {
   }
   if (reply.includes('PEDIDO CANCELADO')) {
     updateClientStatus(userId, 'cancelado', {});
+  }
+
+  if (reply.includes('NECESITA INTERVENCIÓN HUMANA')) {
+    if (cfg.notificationPhoneNumber) {
+      try {
+        await notifyOwnerOfIntervention(cfg, userId, reply);
+      } catch (err) {
+        console.error('Error notificando la intervención:', err);
+      }
+    }
+    const minutes = Number(cfg.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
+    pauseChat(userId, minutes);
   }
 
   return reply;
@@ -1315,6 +1729,11 @@ async function notifyOwnerOfCancellation(cfg, clientUserId, reply) {
   await notifyOwner(cfg, clientUserId, '❌ *Pedido cancelado*', reply);
 }
 
+async function notifyOwnerOfIntervention(cfg, clientUserId, reply) {
+  await notifyOwner(cfg, clientUserId, '🆘 *Este chat necesita intervención humana*', reply);
+}
+
+
 // ---------- IA: llamada según proveedor configurado (con soporte de tools) ----------
 // Devuelve el mensaje completo del modelo (content + tool_calls si los hay).
 // Si Groq/OpenAI responde con error 429 (límite de tokens o mensajes por minuto),
@@ -1394,7 +1813,7 @@ async function transcribeAudio(base64Data, mimetype) {
   }
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt(jid, overrideOrderData) {
   const cfg = readConfig();
   const products = readProducts();
   const catalog = products
@@ -1407,6 +1826,24 @@ function buildSystemPrompt() {
       return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details}\n${videoLine}`;
     })
     .join('\n');
+
+  // overrideOrderData se usa solo desde el simulador de pruebas — así puede
+  // reutilizar este mismo prompt sin tocar ningún cliente real.
+  const client = jid ? clients.get(jid) : null;
+  const orderData = overrideOrderData || client?.orderData || {};
+  const fichaLines = [
+    `Nombre: ${orderData.nombre || '(falta)'}`,
+    `Teléfono: ${orderData.telefono || '(falta)'}`,
+    `Tipo de entrega: ${orderData.tipoEntrega || '(falta — preguntar domicilio u oficina)'}`,
+    orderData.tipoEntrega !== 'oficina' ? `Dirección: ${orderData.direccion || '(falta)'}` : null,
+    `Ciudad: ${orderData.ciudad || '(falta)'}`,
+    `Departamento: ${orderData.departamento || '(falta)'}`,
+    orderData.barrio ? `Barrio: ${orderData.barrio}` : null,
+    `Producto: ${orderData.producto || '(falta)'}`,
+    `Cantidad: ${orderData.cantidad || '(falta)'}`,
+  ].filter(Boolean).join('\n');
+
+  const confirmBeforeClosing = !!cfg.confirmOrderDataBeforeClosing;
 
   return `
 Eres ${cfg.assistantName}, asistente virtual de ventas de ${cfg.companyName}, atendiendo por WhatsApp.
@@ -1428,11 +1865,38 @@ Cuando el cliente pida ver fotos, imágenes o cómo se ve el producto, usa la fu
 Cuando el cliente pida ver un video, una demostración o cómo funciona, usa la función enviar_video_producto — pero solo si el catálogo dice que ese producto SÍ tiene video disponible; si no lo tiene, dilo con naturalidad en vez de llamar la función.
 Nunca digas frases como "ya te la envío" o "aquí tienes la foto/video" si no llamaste a la función correspondiente — el cliente no recibirá nada si solo lo dices en texto.
 
+FICHA DE DATOS DE ESTE CLIENTE (lo que ya tienes guardado, en este momento):
+${fichaLines}
+
+REGLA DE LA FICHA DE DATOS — MUY IMPORTANTE:
+Cada vez que el cliente te dé o corrija CUALQUIERA de estos datos (nombre, teléfono, dirección, departamento, ciudad, barrio, producto, cantidad, tipo de entrega), llama SIEMPRE a la función actualizar_datos_pedido con ese dato — aunque sea uno solo. Así nunca se te olvida ni preguntas dos veces algo que ya te dieron. Antes de pedir un dato, revisa la ficha de arriba — si ya lo tienes, NO lo vuelvas a pedir.
+Cuando el cliente muestre intención clara de comprar, pregunta EXACTAMENTE: "¿Cómo prefieres recibirlo? 🚚 Envío a domicilio o 🏢 recoges en oficina/punto de entrega?" — y guarda la respuesta con actualizar_datos_pedido.
+
+REGLA DE DIRECCIÓN COMPLETA — MUY IMPORTANTE:
+Una dirección solo cuenta como completa si identifica una casa/unidad ESPECÍFICA, no solo una zona o cruce general. Son válidas, por ejemplo:
+- Con nomenclatura: "Carrera 4 #3-40", "Calle 15 # 20-10", "Transversal 25a 11 03" (con o sin el símbolo #, con o sin guion)
+- Manzana y casa: "Manzana 15 Casa 27", "Mz 15 Cs 27"
+- Supermanzana y casa: "Supermanzana 3 Casa 12"
+NO son direcciones completas (pide que la complete, con un ejemplo del formato que necesitas): cruces sin número de casa ("Carrera 15 con 14"), o referencias sin número ("cerca al parque, casa amarilla"). Si la dirección que te dan ya trae un número que identifica la casa/unidad, acéptala tal cual la escribieron — no le exijas un formato exacto si ya es clara.
+
+${orderData.ciudad || orderData.departamento ? `NOTA: Colombia tiene 32 departamentos — si el cliente solo dice la ciudad (ej. "Cumaral"), identifica tú el departamento correcto (ej. Meta) y guarda los dos por separado con actualizar_datos_pedido — nunca los mezcles en un solo campo.` : ''}
+
+${confirmBeforeClosing ? `REGLA DE CONFIRMACIÓN — ACTIVADA:
+Antes de cerrar el pedido, cuando ya tengas TODOS los datos completos, primero repítele al cliente un resumen breve de todos los datos y pregúntale si están correctos. SOLO cuando el cliente confirme que sí (diga "sí", "correcto", "así está bien" o similar), ahí sí cierra el pedido con la frase obligatoria. Si el cliente corrige algo en la confirmación, guarda la corrección con actualizar_datos_pedido y vuelve a confirmar.` : `Apenas la ficha de datos esté completa (según lo que necesite el tipo de entrega elegido), cierra el pedido de una vez, sin pedir una confirmación extra.`}
+
 REGLA DE CANCELACIÓN — MUY IMPORTANTE:
 Si el cliente dice que YA NO QUIERE el producto, se arrepintió de la compra, quiere anular o cancelar su PEDIDO — responde con empatía, sin insistir ni presionar, y SIEMPRE incluye en tu respuesta, exactamente así, la frase:
 ❌ PEDIDO CANCELADO ❌
 Después de esa frase, agrega un resumen breve (producto del que se trataba, y el motivo si el cliente lo mencionó).
 Esta frase es SOLO para cuando el cliente cancela el pedido completo (ya no lo quiere). NUNCA la uses si el cliente solo está cambiando la forma de pago, preguntando por el precio, o teniendo dudas normales — eso NO es una cancelación.
+
+REGLA DE INTERVENCIÓN HUMANA — MUY IMPORTANTE:
+Si el cliente pide explícitamente hablar con una persona/humano/asesor, está muy molesto o agresivo, tiene un reclamo complicado que no puedes resolver con la información que tienes, o cualquier situación donde el buen criterio diga que esto ya no lo debe manejar un bot — responde con calma y empatía, e incluye SIEMPRE, exactamente así, la frase:
+🆘 NECESITA INTERVENCIÓN HUMANA 🆘
+Dile al cliente que ya le avisaste a alguien del equipo y que en un momento le van a escribir. No sigas insistiendo en vender ni resolver tú solo la situación después de usar esta frase.
+
+REGLA DE CONSULTA DE PEDIDOS — MUY IMPORTANTE:
+Si el cliente pregunta por el estado de un pedido que ya hizo (ej. "¿cómo va mi pedido?", "¿ya tiene guía?", "¿cuándo me llega?"), usa SIEMPRE la función consultar_estado_pedido antes de responder — nunca inventes ni asumas un estado. Cuéntale el resultado con naturalidad, no leas el texto tal cual salga de la función.
 `;
 }
 
@@ -1535,9 +1999,36 @@ function ensureClientRecord(jid) {
       messageCount: 0,
       lastMessageAt: Date.now(),
       createdAt: Date.now(),
+      // Ficha de datos del pedido — se va llenando de a poco a medida que el
+      // cliente da información, con la herramienta actualizar_datos_pedido.
+      // Esto reemplaza tener que "adivinar" los datos leyendo el texto final
+      // de la conversación — cada dato queda guardado en el momento exacto
+      // en que el cliente lo da, y se puede corregir sin perder lo demás.
+      orderData: {
+        nombre: '',
+        telefono: '',
+        direccion: '',
+        departamento: '',
+        ciudad: '',
+        barrio: '',
+        producto: '',
+        cantidad: '',
+        tipoEntrega: '', // "domicilio" | "oficina"
+      },
+      notes: '', // notas internas del dueño — nunca las ve el cliente ni la IA
+      followUpsSent: [], // IDs de los mensajes de seguimiento/remarketing ya enviados
     });
   } else {
-    clients.get(jid).lastMessageAt = Date.now();
+    const rec = clients.get(jid);
+    rec.lastMessageAt = Date.now();
+    if (!rec.orderData) {
+      // Cliente creado antes de este cambio — le agregamos la ficha vacía.
+      rec.orderData = {
+        nombre: '', telefono: '', direccion: '', departamento: '',
+        ciudad: '', barrio: '', producto: '', cantidad: '', tipoEntrega: '',
+      };
+    }
+    if (!rec.followUpsSent) rec.followUpsSent = [];
   }
   saveClients();
   io.emit('clientUpdate', { jid, client: clients.get(jid) });
@@ -1667,6 +2158,23 @@ function extractCityFromOrderText(text) {
 
 // ---- Pedidos (Orders): la lista que se sube a Dropi/Skydropx ----
 let orders = [];
+// Mismas 10 etapas que ya usa el tablero del panel (STATUS_COLUMNS en
+// app.js) — se mantienen igual aquí para que la IA describa el estado con
+// las mismas palabras que ves tú en el tablero.
+const ORDER_STATUS_LABELS = {
+  pendiente: 'Pendiente (todavía no se ha generado la guía)',
+  nuevo: 'Nuevo',
+  conversando: 'En conversación',
+  interesado: 'Interesado',
+  comprado: 'Compra confirmada',
+  guia_generada: 'Guía generada',
+  en_camino: 'En camino',
+  con_novedad: 'Con novedad',
+  entregado: 'Entregado',
+  devuelto: 'Devuelto',
+  cancelado: 'Cancelado',
+};
+
 let nextOrderNumber = 1;
 
 function loadOrders() {
@@ -1691,6 +2199,22 @@ function saveOrders() {
 }
 loadOrders();
 
+// ---- Departamentos y municipios de Colombia (para el desplegable de pedidos y para que la IA valide direcciones/ciudades) ----
+let colombiaData = {};
+try {
+  colombiaData = JSON.parse(fs.readFileSync(COLOMBIA_DATA_PATH, 'utf8'));
+} catch (e) {
+  console.error('No se pudo cargar colombia.json:', e);
+}
+function findDepartmentForCity(cityName) {
+  if (!cityName) return null;
+  const normalized = cityName.trim().toLowerCase();
+  for (const [dept, cities] of Object.entries(colombiaData)) {
+    if (cities.some((c) => c.toLowerCase() === normalized)) return dept;
+  }
+  return null;
+}
+
 function createOrder(fields) {
   const id = `ORD-${String(nextOrderNumber).padStart(4, '0')}`;
   nextOrderNumber += 1;
@@ -1713,6 +2237,7 @@ function createOrder(fields) {
     rawSummary: fields.rawSummary || '',
     dropiStatus: null,
     skydropxStatus: null,
+    possibleDuplicateOf: fields.possibleDuplicateOf || null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -1728,6 +2253,68 @@ function updateOrder(id, fields) {
   Object.assign(order, fields, { updatedAt: Date.now() });
   saveOrders();
   io.emit('orderUpdate', { order });
+  return order;
+}
+
+// Crea el pedido automáticamente apenas la IA cierra una venta — sin
+// necesitar que nadie le dé clic a nada. Evita duplicados: si el cliente
+// vuelve a preguntar "¿ya quedó confirmado?" y la IA repite exactamente el
+// mismo resumen, no crea un segundo pedido igual.
+async function autoCreateOrderFromSummary(jid, client, summary) {
+  const alreadyExists = orders.some((o) => o.clientJid === jid && o.rawSummary === summary);
+  if (alreadyExists) return null;
+
+  // La ficha de datos estructurada (si ya está llena) es más confiable que
+  // "adivinar" leyendo el texto final — se usa de primera, y el texto
+  // extraído queda solo como respaldo si algún campo no se llegó a guardar.
+  const od = client?.orderData || {};
+  const phone = od.telefono || client?.phone || jid.split('@')[0];
+
+  // Aviso de pedido duplicado: si este mismo teléfono ya tiene otro pedido
+  // reciente (últimas 24h) sin resolver todavía, lo marcamos para que se
+  // note en el panel — no bloquea la creación, solo avisa.
+  const UNRESOLVED = ['pendiente', 'guia_generada', 'en_camino'];
+  const recentDuplicate = orders.find(
+    (o) =>
+      o.clientPhone === phone &&
+      UNRESOLVED.includes(o.status) &&
+      Date.now() - o.createdAt < 24 * 60 * 60 * 1000
+  );
+
+  const order = createOrder({
+    clientJid: jid,
+    clientName: od.nombre || client?.name || extractNameFromOrderText(summary) || '',
+    clientPhone: phone,
+    product: od.producto || extractProductFromOrderText(summary) || '',
+    quantity: od.cantidad || 1,
+    price: extractPriceFromOrderText(summary) || '',
+    address: od.direccion || extractAddressFromOrderText(summary) || '',
+    department: od.departamento || '',
+    city: od.ciudad || extractCityFromOrderText(summary) || '',
+    neighborhood: od.barrio || '',
+    deliveryType: od.tipoEntrega || 'domicilio',
+    status: 'pendiente',
+    source: 'ia',
+    rawSummary: summary,
+    possibleDuplicateOf: recentDuplicate ? recentDuplicate.id : null,
+  });
+
+  if (recentDuplicate) {
+    io.emit('log', `⚠️ Posible pedido duplicado: ${order.id} y ${recentDuplicate.id} son del mismo teléfono, en menos de 24h`);
+  }
+
+  // Avisar al cliente el número de orden, para que lo tenga guardado y pueda
+  // consultarlo después (con la función consultar_estado_pedido).
+  try {
+    const text = `Tu pedido quedó registrado con el código *${order.id}* 📦 — guárdalo por si necesitas consultar el estado más adelante.`;
+    await sendAndTrack(jid, { text });
+    appendChatLog(jid, { from: 'bot', text, type: 'text', timestamp: Date.now() });
+  } catch (e) {
+    console.error('No se pudo enviar el número de orden al cliente:', e);
+  }
+
+  await autoUploadIfEnabled(order);
+
   return order;
 }
 
@@ -1943,10 +2530,10 @@ async function startBot() {
       }
 
       if (!conversations.has(userId)) {
-        conversations.set(userId, [{ role: 'system', content: buildSystemPrompt() }]);
+        conversations.set(userId, [{ role: 'system', content: buildSystemPrompt(userId) }]);
       }
       const history = conversations.get(userId);
-      history[0] = { role: 'system', content: buildSystemPrompt() }; // refresca por si cambiaron productos/config
+      history[0] = { role: 'system', content: buildSystemPrompt(userId) }; // refresca por si cambiaron productos/config/ficha de datos
       history.push({ role: 'user', content: messageText });
 
       if (history.length > MAX_HISTORY + 1) {
@@ -1967,7 +2554,7 @@ async function startBot() {
       await sleep((cfg.responseDelaySeconds ?? 5) * 1000);
 
       // ---- Primera llamada a la IA, con las herramientas de imagen y video disponibles ----
-      let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool]);
+      let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool]);
 
       if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
         // El modelo decidió enviar imagen o video: lo hacemos de verdad.
@@ -1996,6 +2583,10 @@ async function startBot() {
             resultText = sent
               ? `Video de "${product.name}" enviado correctamente.`
               : 'Ese producto no tiene un video cargado.';
+          } else if (toolCall.function.name === 'actualizar_datos_pedido') {
+            resultText = handleUpdateOrderData(userId, args);
+          } else if (toolCall.function.name === 'consultar_estado_pedido') {
+            resultText = handleCheckOrderStatus(userId, args);
           }
 
           history.push({
@@ -2059,6 +2650,7 @@ async function startBot() {
           lastOrderSummary: reply,
           ...(name ? { name } : {}),
         });
+        await autoCreateOrderFromSummary(userId, clients.get(userId), reply);
       }
 
       // ---- Si el cliente canceló el pedido, avisar también ----
@@ -2073,6 +2665,22 @@ async function startBot() {
       }
       if (reply.includes('PEDIDO CANCELADO')) {
         updateClientStatus(userId, 'cancelado', {});
+      }
+
+      // ---- Si la IA detectó que hace falta una persona real, avisar y pausar ----
+      if (reply.includes('NECESITA INTERVENCIÓN HUMANA')) {
+        if (cfg.notificationPhoneNumber) {
+          try {
+            await notifyOwnerOfIntervention(cfg, userId, reply);
+            io.emit('log', `🆘 Intervención humana notificada a ${cfg.notificationPhoneNumber}`);
+          } catch (err) {
+            console.error('Error notificando la intervención:', err);
+            io.emit('log', `⚠️ No se pudo notificar la intervención: ${err.message}`);
+          }
+        }
+        const minutes = Number(cfg.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
+        pauseChat(userId, minutes);
+        io.emit('log', `⏸️ ${userId} pausado — necesita intervención humana`);
       }
 
       io.emit('log', `💬 ${userId}: ${messageText}`);
