@@ -627,6 +627,123 @@ input:focus, select:focus, textarea:focus {
 /* ---------- Responsivo (celular) ---------- */
 .mobile-only { display: none; }
 
+/* ---------- Notificaciones "toast" ---------- */
+#toastContainer {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+}
+.toast {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--accent-green);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  animation: toastIn 0.2s ease;
+}
+.toast.error { border-left-color: #dc2626; }
+.toast.info { border-left-color: #3b82f6; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(20px); } }
+
+/* ---------- Avatares con iniciales ---------- */
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+.avatar-row { display: flex; align-items: center; gap: 10px; }
+.product-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--bg-hover);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  margin-right: 4px;
+}
+
+/* ---------- Estados vacíos ---------- */
+.empty-state {
+  text-align: center;
+  padding: 30px 16px;
+  color: var(--text-hint);
+  font-size: 0.85rem;
+}
+.empty-state .empty-icon { font-size: 2rem; display: block; margin-bottom: 8px; }
+
+/* ---------- Indicador de carga ---------- */
+.loading-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-green);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Buscador ---------- */
+.search-box {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+/* ---------- Selección múltiple (Pedidos) ---------- */
+.bulk-action-bar {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-hover);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+}
+.bulk-action-bar.visible { display: flex; }
+
+/* ---------- Dashboard (barras simples) ---------- */
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 0.85rem; }
+.bar-row .bar-label { width: 90px; flex-shrink: 0; color: var(--text-secondary); }
+.bar-row .bar-track { flex: 1; background: var(--bg-hover); border-radius: 6px; height: 20px; overflow: hidden; }
+.bar-row .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent-green), var(--accent-green-2)); border-radius: 6px; }
+.bar-row .bar-value { width: 36px; text-align: right; font-weight: 700; color: var(--text-primary); }
+
+/* ---------- Secuencia de seguimiento ---------- */
+.followup-row {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--bg-column);
+}
+.followup-row .followup-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.followup-row .followup-delay { width: 90px; }
+
+
 @media (max-width: 860px) {
   .sidebar { width: 0; border: none; }
   .sidebar:hover, .sidebar.pinned { width: 230px; }
