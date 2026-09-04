@@ -3,7 +3,7 @@ async function checkLicense() {
   const lic = await fetch('/api/license').then((r) => r.json());
   if (lic.activated) {
     document.getElementById('lockScreen').style.display = 'none';
-    document.getElementById('mainApp').style.display = 'block';
+    document.getElementById('mainApp').style.display = 'flex';
     initApp();
   } else {
     document.getElementById('lockScreen').style.display = 'flex';
@@ -65,8 +65,14 @@ async function checkUpdateBannerOnLoad() {
         'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px;background:#fef9c3;border-bottom:1px solid #eab308;font-family:inherit;';
       banner.innerHTML = `
         <span>🔔 Hay una actualización disponible: <b>${data.latestVersion}</b>${data.notes ? ' — ' + data.notes : ''}</span>
-        <button id="bannerUpdateBtn" class="save-btn" style="white-space:nowrap">⬇ Descargar</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="bannerUpdateBtn" class="save-btn" style="white-space:nowrap;margin-top:0">⬇ Descargar</button>
+          <button id="bannerCloseBtn" title="Cerrar (vuelve a aparecer la próxima vez que abras la app)" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#78350f;padding:0 4px">✕</button>
+        </div>
       `;
+      document.getElementById('bannerCloseBtn').addEventListener('click', () => {
+        banner.style.display = 'none';
+      });
       document.getElementById('bannerUpdateBtn').addEventListener('click', async () => {
         if (!confirm('¿Instalar la actualización ahora? Vas a necesitar reiniciar el bot después.')) return;
         banner.innerHTML = 'Instalando actualización...';
@@ -225,7 +231,7 @@ fetch('/api/network-info')
 const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
   'responseDelaySeconds', 'notificationPhoneNumber', 'pauseDurationMinutes', 'aiProvider', 'groqApiKey',
-  'openaiApiKey', 'autoUploadProvider',
+  'openaiApiKey', 'deepseekApiKey', 'autoUploadProvider', 'dropiEmail', 'dropiPassword',
 ];
 // groqModel y openaiModel se manejan aparte porque son selects con opción
 // "otro personalizado" (por si el modelo que quieren no está en la lista).
@@ -272,17 +278,50 @@ async function loadConfig() {
   // lo traducimos automáticamente a voiceMode la primera vez que carga.
   document.getElementById('cfg-voiceMode').value = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
   document.getElementById('cfg-confirmOrderDataBeforeClosing').checked = !!cfg.confirmOrderDataBeforeClosing;
+  document.getElementById('cfg-dropiUseTestEnv').checked = !!cfg.dropiUseTestEnv;
   document.getElementById('cfg-minimaxApiKey').value = cfg.minimaxApiKey || '';
   document.getElementById('cfg-minimaxGroupId').value = cfg.minimaxGroupId || '';
   updateVoiceCloneStatus(cfg);
   setupModelSelect('cfg-groqModel', 'cfg-groqModel-custom', cfg.groqModel);
   setupModelSelect('cfg-openaiModel', 'cfg-openaiModel-custom', cfg.openaiModel);
+  setupModelSelect('cfg-deepseekModel', 'cfg-deepseekModel-custom', cfg.deepseekModel);
 
   if (!cfg.onboardingCompleted) {
     document.getElementById('onboardingOverlay').style.display = 'flex';
   }
 }
 loadConfig();
+
+// ---------- Configuración en acordeón — se arma solo, sin tocar el HTML de
+// cada tarjeta (así no se rompe ninguna lógica de mostrar/ocultar campos que
+// ya tenían adentro, como el modelo personalizado) ----------
+function setupCollapsibleCards() {
+  document.querySelectorAll('.collapsible-card').forEach((card) => {
+    if (card.dataset.accordionReady) return;
+    const h2 = card.querySelector('h2');
+    if (!h2) return;
+    card.dataset.accordionReady = 'true';
+
+    const header = document.createElement('div');
+    header.className = 'card-accordion-header';
+    h2.parentNode.insertBefore(header, h2);
+    header.appendChild(h2);
+    const chevron = document.createElement('span');
+    chevron.className = 'card-accordion-chevron';
+    chevron.textContent = '▾';
+    header.appendChild(chevron);
+
+    const body = document.createElement('div');
+    body.className = 'card-accordion-body';
+    while (card.children.length > 1) {
+      body.appendChild(card.children[1]);
+    }
+    card.appendChild(body);
+
+    header.addEventListener('click', () => card.classList.toggle('open'));
+  });
+}
+setupCollapsibleCards();
 
 // ---------- Asistente de configuración inicial (onboarding) ----------
 function showOnboardingStep(n) {
@@ -307,7 +346,7 @@ document.getElementById('onboardingGoProductosBtn').addEventListener('click', ()
 document.getElementById('onboardingFinishBtn').addEventListener('click', finishOnboarding);
 document.getElementById('onboardingSkipBtn').addEventListener('click', finishOnboarding);
 
-document.getElementById('saveConfigBtn').addEventListener('click', async () => {
+async function saveMainConfig(savedLabelId) {
   const body = {};
   cfgFields.forEach((f) => {
     const el = document.getElementById(`cfg-${f}`);
@@ -315,16 +354,20 @@ document.getElementById('saveConfigBtn').addEventListener('click', async () => {
   });
   body.groqModel = getModelValue('cfg-groqModel', 'cfg-groqModel-custom');
   body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
+  body.deepseekModel = getModelValue('cfg-deepseekModel', 'cfg-deepseekModel-custom');
   body.confirmOrderDataBeforeClosing = document.getElementById('cfg-confirmOrderDataBeforeClosing').checked;
+  body.dropiUseTestEnv = document.getElementById('cfg-dropiUseTestEnv').checked;
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const saved = document.getElementById('configSaved');
+  const saved = document.getElementById(savedLabelId);
   saved.textContent = 'Guardado ✔';
   setTimeout(() => (saved.textContent = ''), 2000);
-});
+}
+document.getElementById('saveConfigBtn').addEventListener('click', () => saveMainConfig('configSaved'));
+document.getElementById('saveAiProviderBtn').addEventListener('click', () => saveMainConfig('aiProviderSaved'));
 
 // Botón propio para la tarjeta de voz — guarda API key, Group ID y el modo de voz.
 document.getElementById('saveVoiceConfigBtn').addEventListener('click', async () => {
@@ -490,15 +533,33 @@ const STATUS_COLUMNS = [
   { key: 'nuevo', label: '🆕 Nuevo', color: '#64748b' },
   { key: 'conversando', label: '💬 En conversación', color: '#3b82f6' },
   { key: 'interesado', label: '🔥 Interesado', color: '#f97316' },
+  { key: 'programado', label: '📅 Programado', color: '#a855f7' },
   { key: 'comprado', label: '✅ Compra confirmada', color: '#16a34a' },
   { key: 'guia_generada', label: '📦 Guía generada', color: '#8b5cf6' },
   { key: 'en_camino', label: '🚚 En camino', color: '#0ea5e9' },
   { key: 'con_novedad', label: '⚠️ Con novedad', color: '#ef4444' },
+  { key: 'intento_cancelacion', label: '🟠 Intento de cancelación', color: '#f97316' },
   { key: 'entregado', label: '📬 Entregado', color: '#059669' },
   { key: 'devuelto', label: '↩️ Devuelto', color: '#eab308' },
   { key: 'cancelado', label: '❌ Cancelado', color: '#dc2626' },
 ];
 const STATUS_LABELS = Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, c]));
+
+// Estados exclusivos de Pedidos — "Nuevo/En conversación/Interesado/Compra
+// confirmada" son etapas de CONVERSACIÓN con el cliente (viven en el Tablero
+// de Clientes de arriba). Un pedido nace directamente en Pendiente, y pasa a
+// Confirmado apenas se sube a Dropi/Skydropx con éxito.
+const ORDER_STATUS_COLUMNS = [
+  { key: 'pendiente', label: '🟡 Pendiente', color: '#f59e0b' },
+  { key: 'confirmado', label: '✅ Confirmado', color: '#16a34a' },
+  { key: 'guia_generada', label: '📦 Guía generada', color: '#8b5cf6' },
+  { key: 'en_camino', label: '🚚 En camino', color: '#0ea5e9' },
+  { key: 'con_novedad', label: '⚠️ Con novedad', color: '#ef4444' },
+  { key: 'intento_cancelacion', label: '🟠 Intento de cancelación', color: '#f97316' },
+  { key: 'entregado', label: '📬 Entregado', color: '#059669' },
+  { key: 'devuelto', label: '↩️ Devuelto', color: '#eab308' },
+  { key: 'cancelado', label: '❌ Cancelado', color: '#dc2626' },
+];
 const TAG_LABELS = {
   lead: { label: '🆕 Lead', color: '#64748b' },
   interesado: { label: '🔥 Interesado', color: '#f97316' },
@@ -509,6 +570,49 @@ const TAG_LABELS = {
 let selectedClientJid = null;
 let clientsCache = [];
 let productsCacheForRp = [];
+let colombiaDataCache = null;
+
+async function loadColombiaData() {
+  if (colombiaDataCache) return colombiaDataCache;
+  colombiaDataCache = await fetch('/api/colombia').then((r) => r.json());
+  return colombiaDataCache;
+}
+
+async function populateDepartmentSelect(deptSelectId, citySelectId) {
+  const data = await loadColombiaData();
+  const deptSelect = document.getElementById(deptSelectId);
+  const citySelect = document.getElementById(citySelectId);
+  deptSelect.innerHTML = '<option value="">Elegir...</option>' + Object.keys(data).sort().map((d) => `<option value="${d}">${d}</option>`).join('');
+  deptSelect.onchange = () => {
+    const cities = data[deptSelect.value] || [];
+    citySelect.innerHTML = cities.length
+      ? '<option value="">Elegir...</option>' + cities.map((c) => `<option value="${c}">${c}</option>`).join('')
+      : '<option value="">Elegir departamento primero</option>';
+  };
+}
+
+function populateManualOrderProducts() {
+  const select = document.getElementById('mo-product');
+  select.innerHTML = '<option value="">Elegir producto...</option>' + productsCacheForRp.map((p) => `<option value="${p.name}">${p.name}</option>`).join('');
+}
+
+function checkDuplicateOrderWarning(client) {
+  const warningEl = document.getElementById('moDuplicateWarning');
+  const UNRESOLVED = ['pendiente', 'confirmado', 'guia_generada', 'en_camino'];
+  const duplicate = ordersCache.find(
+    (o) =>
+      (o.clientJid === client?.jid || o.clientPhone === client?.phone) &&
+      UNRESOLVED.includes(o.status) &&
+      Date.now() - o.createdAt < 24 * 60 * 60 * 1000
+  );
+  if (duplicate) {
+    warningEl.style.display = 'block';
+    warningEl.textContent = `⚠️ Este cliente ya tiene un pedido reciente sin resolver (${duplicate.id}) — si creas otro, van a quedar dos pedidos por separado.`;
+  } else {
+    warningEl.style.display = 'none';
+  }
+}
+
 let activeTagFilter = 'todos';
 let activeDateFilter = 'todas';
 let clientSearchText = '';
@@ -538,13 +642,23 @@ function formatTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
+// Los <input type="date"> dan "YYYY-MM-DD" — parsear eso con `new Date(texto)`
+// lo interpreta como medianoche en UTC, no en tu hora local, y mezclado con
+// .setHours() (que sí usa la hora local) el rango queda desalineado — a veces
+// "desde" terminaba después de "hasta", vaciando la lista entera. Separando
+// los números a mano se evita ese lío de zona horaria.
+function parseLocalDateInput(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function isWithinDateFilter(ts, filter, customRange) {
   const range = customRange !== undefined ? customRange : customDateRange;
   if (range && range.from && range.to) {
     if (!ts) return false;
     const t = new Date(ts).setHours(0, 0, 0, 0);
-    const from = new Date(range.from).setHours(0, 0, 0, 0);
-    const to = new Date(range.to).setHours(23, 59, 59, 999);
+    const from = parseLocalDateInput(range.from).setHours(0, 0, 0, 0);
+    const to = parseLocalDateInput(range.to).setHours(23, 59, 59, 999);
     return t >= from && t <= to;
   }
   if (!ts || filter === 'todas') return true;
@@ -713,6 +827,7 @@ function renderClientList() {
   filtered.forEach((c) => {
       const statusInfo = STATUS_LABELS[c.status] || { label: c.status, color: '#6b7280' };
       const isPausedNow = c.pausedUntil && c.pausedUntil > Date.now();
+      const tagIcon = { cliente: '✅', interesado: '🔥', descartado: '❌', lead: '' }[c.tag || 'lead'] || '';
       const item = document.createElement('div');
       item.className = 'client-list-item' + (c.jid === selectedClientJid ? ' selected' : '');
       item.innerHTML = `
@@ -723,6 +838,7 @@ function renderClientList() {
             <div class="meta" style="color:${statusInfo.color}">${statusInfo.label}${isPausedNow ? ' · ⏸️ Pausado' : ''}</div>
             <div class="time">${formatTime(c.lastMessageAt)}</div>
           </div>
+          ${tagIcon ? `<span style="font-size:1.1rem" title="${c.tag}">${tagIcon}</span>` : ''}
         </div>
       `;
       item.addEventListener('click', () => {
@@ -793,6 +909,33 @@ function renderRightPanel(client) {
   document.getElementById('rpTag').value = tag;
   document.getElementById('rpNotes').value = client.notes || '';
 
+  const od = client.orderData || {};
+  const fichaFieldDefs = [
+    ['nombre', 'Nombre'], ['telefono', 'Teléfono'], ['producto', 'Producto'], ['cantidad', 'Cantidad'],
+    ['direccion', 'Dirección'], ['ciudad', 'Ciudad'], ['departamento', 'Departamento'], ['barrio', 'Barrio (opcional)'],
+  ];
+  const fichaHtml = fichaFieldDefs
+    .map(([key, label]) => `
+      <label style="margin-top:8px;font-size:0.78rem">${label}</label>
+      <input type="text" class="ficha-field" data-field="${key}" value="${(od[key] || '').replace(/"/g, '&quot;')}" style="padding:8px 10px;font-size:0.85rem" />
+    `)
+    .join('') +
+    `<label style="margin-top:8px;font-size:0.78rem">Tipo de entrega</label>
+     <select class="ficha-field" data-field="tipoEntrega" style="padding:8px 10px;font-size:0.85rem">
+       <option value="" ${!od.tipoEntrega ? 'selected' : ''}>(falta)</option>
+       <option value="domicilio" ${od.tipoEntrega === 'domicilio' ? 'selected' : ''}>Domicilio</option>
+       <option value="oficina" ${od.tipoEntrega === 'oficina' ? 'selected' : ''}>Oficina</option>
+     </select>`;
+  document.getElementById('rpOrderData').innerHTML = fichaHtml;
+
+  const scheduleStatusEl = document.getElementById('rpScheduleStatus');
+  if (client.scheduledDelivery) {
+    scheduleStatusEl.textContent = `Programado para ${client.scheduledDelivery.date}${client.scheduledDelivery.reminderSent ? ' — recordatorio ya enviado' : ' — recordatorio pendiente (se manda 2 días antes)'}`;
+  } else {
+    scheduleStatusEl.textContent = '';
+  }
+  document.getElementById('rpScheduleDate').value = client.scheduledDelivery?.date || '';
+
   const statusSelect = document.getElementById('rpStatusSelect');
   statusSelect.innerHTML = STATUS_COLUMNS.map(
     (s) => `<option value="${s.key}" ${s.key === client.status ? 'selected' : ''}>${s.label}</option>`
@@ -843,6 +986,20 @@ document.getElementById('rpSaveNotesBtn').addEventListener('click', async () => 
   showToast('Nota guardada.');
 });
 
+document.getElementById('rpSaveOrderDataBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  const orderData = {};
+  document.querySelectorAll('#rpOrderData .ficha-field').forEach((el) => {
+    orderData[el.dataset.field] = el.value;
+  });
+  await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/order-data`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderData }),
+  });
+  showToast('Ficha de datos guardada.');
+});
+
 document.getElementById('rpStatusSelect').addEventListener('change', async (e) => {
   if (!selectedClientJid) return;
   await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/status`, {
@@ -889,18 +1046,36 @@ document.getElementById('rpActivateProductBtn').addEventListener('click', async 
   if (!res.ok) showToast(res.error || 'No se pudo activar el asistente', 'error');
 });
 
+document.getElementById('rpScheduleDeliveryBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  const date = document.getElementById('rpScheduleDate').value;
+  if (!date) return showToast('Elige una fecha primero', 'error');
+  await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/schedule-delivery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date }),
+  });
+  showToast('Entrega programada — se le recordará al cliente 2 días antes.');
+});
+
 document.getElementById('rpManualOrderBtn').addEventListener('click', () => {
   if (!selectedClientJid) return;
   const client = clientsCache.find((c) => c.jid === selectedClientJid);
-  document.getElementById('mo-clientName').value = client?.name || '';
-  document.getElementById('mo-clientPhone').value = client?.phone || '';
+  document.getElementById('mo-clientName').value = client?.orderData?.nombre || client?.name || '';
+  // Preferimos el teléfono que el cliente escribió en la conversación (guardado
+  // en la ficha de datos) sobre el número de WhatsApp/Baileys, que a veces no
+  // es el real — si no hay ninguno guardado, se deja vacío para escribirlo a mano.
+  document.getElementById('mo-clientPhone').value = client?.orderData?.telefono || '';
+  populateManualOrderProducts();
   document.getElementById('mo-product').value = '';
   document.getElementById('mo-quantity').value = 1;
   document.getElementById('mo-price').value = '';
-  document.getElementById('mo-address').value = '';
+  document.getElementById('mo-address').value = client?.orderData?.direccion || '';
+  populateDepartmentSelect('mo-department', 'mo-city');
   document.getElementById('mo-department').value = '';
-  document.getElementById('mo-city').value = '';
-  document.getElementById('mo-neighborhood').value = '';
+  document.getElementById('mo-city').innerHTML = '<option value="">Elegir departamento primero</option>';
+  document.getElementById('mo-neighborhood').value = client?.orderData?.barrio || '';
+  checkDuplicateOrderWarning(client);
   document.getElementById('manualOrderOverlay').style.display = 'flex';
 });
 document.getElementById('closeManualOrderBtn').addEventListener('click', () => {
@@ -927,6 +1102,95 @@ document.getElementById('saveManualOrderBtn').addEventListener('click', async ()
   showToast(`Pedido ${res.id} creado.`);
 });
 
+// ---- Plantilla manual "Guía generada" — jala todo del pedido, editable antes de enviar ----
+let guideTemplateOrder = null;
+
+function buildGuideTemplateText(order, guideNumber, transportadora) {
+  const lines = [
+    `¡Hola ${order.clientName || ''}! 😊 Tu pedido *${order.product || ''}* ya tiene guía generada 📦`,
+    ``,
+    `N° de guía: ${guideNumber || '(pendiente)'}`,
+    `Transportadora: ${transportadora || '(pendiente)'}`,
+    `Precio: ${order.price || ''}`,
+    ``,
+    `Usa este número para rastrear tu pedido — llega en aproximadamente 3 a 6 días hábiles.`,
+    `¡Gracias por tu compra! 🎉`,
+  ];
+  return lines.join('\n');
+}
+
+document.getElementById('rpGuideTemplateBtn').addEventListener('click', () => {
+  if (!selectedClientJid) return;
+  guideTemplateOrder = ordersCache
+    .filter((o) => o.clientJid === selectedClientJid)
+    .sort((a, b) => b.createdAt - a.createdAt)[0];
+
+  document.getElementById('guideTemplateOverlay').style.display = 'flex';
+  if (!guideTemplateOrder) {
+    document.getElementById('guideTemplateNoOrder').style.display = 'block';
+    document.getElementById('guideTemplateFields').style.display = 'none';
+    return;
+  }
+  document.getElementById('guideTemplateNoOrder').style.display = 'none';
+  document.getElementById('guideTemplateFields').style.display = 'block';
+  document.getElementById('gt-guideNumber').value = guideTemplateOrder.dropiGuideNumber || '';
+  document.getElementById('gt-transportadora').value = guideTemplateOrder.transportadora || '';
+  document.getElementById('gt-message').value = buildGuideTemplateText(
+    guideTemplateOrder,
+    guideTemplateOrder.dropiGuideNumber,
+    guideTemplateOrder.transportadora
+  );
+});
+document.getElementById('closeGuideTemplateBtn').addEventListener('click', () => {
+  document.getElementById('guideTemplateOverlay').style.display = 'none';
+});
+document.getElementById('regenerateGuideTemplateBtn').addEventListener('click', () => {
+  if (!guideTemplateOrder) return;
+  document.getElementById('gt-message').value = buildGuideTemplateText(
+    guideTemplateOrder,
+    document.getElementById('gt-guideNumber').value,
+    document.getElementById('gt-transportadora').value
+  );
+});
+document.getElementById('sendGuideTemplateBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  const res = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: document.getElementById('gt-message').value }),
+  }).then((r) => r.json());
+  if (!res.ok) return showToast(res.error || 'No se pudo enviar', 'error');
+
+  // Guarda también el número de guía/transportadora en el pedido, si se cambiaron aquí.
+  if (guideTemplateOrder) {
+    await fetch(`/api/orders/${guideTemplateOrder.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dropiGuideNumber: document.getElementById('gt-guideNumber').value,
+        transportadora: document.getElementById('gt-transportadora').value,
+        status: 'guia_generada',
+      }),
+    });
+  }
+  document.getElementById('guideTemplateOverlay').style.display = 'none';
+  showToast('Mensaje de guía enviado.');
+});
+
+document.getElementById('rpExportChatBtn').addEventListener('click', async () => {
+  if (!selectedClientJid) return;
+  const client = clientsCache.find((c) => c.jid === selectedClientJid);
+  const messages = await fetch(`/api/clients/${encodeURIComponent(selectedClientJid)}/messages`).then((r) => r.json());
+  const labels = { client: client?.name || client?.phone || 'Cliente', bot: 'Ángela', owner: 'Tú' };
+  const lines = messages.map((m) => `[${formatTime(m.timestamp)}] ${labels[m.from] || m.from}: ${m.text || `(${m.type})`}`);
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Conversación copiada — pégala donde quieras.');
+  } catch (e) {
+    showToast('No se pudo copiar automático — revisa los permisos del navegador.', 'error');
+  }
+});
 document.getElementById('rpDeleteChatBtn').addEventListener('click', () => deleteSelectedChat(selectedClientJid));
 
 async function deleteSelectedChat(jid) {
@@ -1075,7 +1339,13 @@ socket.on('clientUpdate', ({ jid, client }) => {
   loadClients();
   if (jid === selectedClientJid) renderRightPanel(client);
 });
-socket.on('pauseUpdate', () => loadClients());
+socket.on('pauseUpdate', async ({ jid, pausedUntil }) => {
+  await loadClients();
+  if (jid === selectedClientJid) {
+    const client = clientsCache.find((c) => c.jid === jid);
+    if (client) renderRightPanel(client);
+  }
+});
 socket.on('clientDeleted', ({ jid }) => {
   loadClients();
   if (jid === selectedClientJid) {
@@ -1113,7 +1383,7 @@ async function loadOrders() {
 document.getElementById('refreshOrdersBtn').addEventListener('click', loadOrders);
 
 document.getElementById('orderStatusFilter').innerHTML +=
-  STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
+  ORDER_STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
 document.getElementById('orderStatusFilter').addEventListener('change', renderOrdersTable);
 
 document.getElementById('orderSearchInput').addEventListener('input', (e) => {
@@ -1139,13 +1409,31 @@ function renderOrderStats() {
   const div = document.getElementById('pedidosStats');
   const counts = {};
   ordersCache.forEach((o) => { counts[o.status] = (counts[o.status] || 0) + 1; });
-  // "pendiente" no está en STATUS_COLUMNS (es el estado inicial de un pedido,
-  // antes de generar guía), lo mostramos aparte del resto de etapas.
-  const pendienteCount = counts['pendiente'] || 0;
-  div.innerHTML =
-    `<div class="stat-card"><b>${ordersCache.length}</b><span>Total</span></div>` +
-    `<div class="stat-card" style="color:#f59e0b"><b>${pendienteCount}</b><span>Pendientes</span></div>` +
-    STATUS_COLUMNS.map((s) => `<div class="stat-card" style="color:${s.color}"><b>${counts[s.key] || 0}</b><span>${s.label}</span></div>`).join('');
+
+  const totalCard = document.createElement('div');
+  totalCard.className = 'stat-card';
+  totalCard.innerHTML = `<b>${ordersCache.length}</b><span>Total</span>`;
+  totalCard.style.cursor = 'pointer';
+  totalCard.addEventListener('click', () => {
+    document.getElementById('orderStatusFilter').value = '';
+    renderOrdersTable();
+  });
+
+  div.innerHTML = '';
+  div.appendChild(totalCard);
+
+  // Clic en cualquier tarjeta de estado filtra la tabla de abajo por ese estado.
+  ORDER_STATUS_COLUMNS.forEach((s) => {
+    const card = document.createElement('div');
+    card.className = 'stat-card';
+    card.style.cssText = `color:${s.color};cursor:pointer`;
+    card.innerHTML = `<b>${counts[s.key] || 0}</b><span>${s.label}</span>`;
+    card.addEventListener('click', () => {
+      document.getElementById('orderStatusFilter').value = s.key;
+      renderOrdersTable();
+    });
+    div.appendChild(card);
+  });
 }
 
 function getFilteredOrders() {
@@ -1175,9 +1463,9 @@ function renderOrdersTable() {
   }
 
   filtered.forEach((o) => {
-      const statusInfo = STATUS_COLUMNS.find((s) => s.key === o.status) || { label: o.status || 'pendiente', color: '#f59e0b' };
+      const statusInfo = ORDER_STATUS_COLUMNS.find((s) => s.key === o.status) || { label: o.status || 'pendiente', color: '#f59e0b' };
       const tr = document.createElement('tr');
-      const dupWarning = o.possibleDuplicateOf ? ` <span title="Posible duplicado de ${o.possibleDuplicateOf}">⚠️</span>` : '';
+      const dupWarning = o.possibleDuplicateOf ? ` <span class="dup-warning-icon" data-dup-of="${o.possibleDuplicateOf}">⚠️</span>` : '';
       tr.innerHTML = `
         <td><input type="checkbox" class="order-checkbox" data-id="${o.id}" ${selectedOrderIds.has(o.id) ? 'checked' : ''} /></td>
         <td>${o.id}${dupWarning}</td>
@@ -1194,6 +1482,13 @@ function renderOrdersTable() {
         else selectedOrderIds.delete(o.id);
         updateOrdersBulkBar();
       });
+      const dupIcon = tr.querySelector('.dup-warning-icon');
+      if (dupIcon) {
+        dupIcon.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showToast(`Posible duplicado de ${dupIcon.dataset.dupOf} — mismo cliente con otro pedido sin resolver en las últimas 24h.`, 'error');
+        });
+      }
       tr.addEventListener('click', () => openOrderDetail(o.id));
       tbody.appendChild(tr);
     });
@@ -1209,7 +1504,7 @@ document.getElementById('ordersSelectAllCheckbox').addEventListener('change', (e
 });
 
 document.getElementById('ordersBulkStatusSelect').innerHTML =
-  `<option value="pendiente">🟡 Pendiente</option>` + STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
+  ORDER_STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
 
 function updateOrdersBulkBar() {
   const bar = document.getElementById('ordersBulkBar');
@@ -1249,19 +1544,27 @@ function openOrderDetail(id) {
   document.getElementById('orderDetailTitle').textContent = `Pedido ${order.id}`;
   document.getElementById('od-clientName').value = order.clientName || '';
   document.getElementById('od-clientPhone').value = order.clientPhone || '';
-  document.getElementById('od-product').value = order.product || '';
+  const productSelect = document.getElementById('od-product');
+  productSelect.innerHTML = '<option value="">Elegir producto...</option>' + productsCacheForRp.map((p) => `<option value="${p.name}">${p.name}</option>`).join('');
+  productSelect.value = order.product || '';
+  if (productSelect.value !== order.product && order.product) {
+    // El producto guardado ya no está en el catálogo actual — se agrega como opción aparte, para no perder el dato.
+    productSelect.innerHTML += `<option value="${order.product}" selected>${order.product} (fuera del catálogo actual)</option>`;
+  }
   document.getElementById('od-quantity').value = order.quantity || 1;
   document.getElementById('od-price').value = order.price || '';
   document.getElementById('od-deliveryType').value = order.deliveryType || 'domicilio';
   document.getElementById('od-address').value = order.address || '';
-  document.getElementById('od-department').value = order.department || '';
-  document.getElementById('od-city').value = order.city || '';
+  populateDepartmentSelect('od-department', 'od-city').then(() => {
+    document.getElementById('od-department').value = order.department || '';
+    document.getElementById('od-department').dispatchEvent(new Event('change'));
+    document.getElementById('od-city').value = order.city || '';
+  });
   document.getElementById('od-neighborhood').value = order.neighborhood || '';
   document.getElementById('od-transportadora').value = order.transportadora || '';
+  document.getElementById('od-guideNumber').value = order.dropiGuideNumber || '';
   const statusSelect = document.getElementById('od-status');
-  statusSelect.innerHTML =
-    `<option value="pendiente">🟡 Pendiente</option>` +
-    STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
+  statusSelect.innerHTML = ORDER_STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
   statusSelect.value = order.status || 'pendiente';
   document.getElementById('uploadStatus').textContent = '';
   document.getElementById('orderDetailOverlay').style.display = 'flex';
@@ -1287,6 +1590,7 @@ document.getElementById('saveOrderBtn').addEventListener('click', async () => {
       city: document.getElementById('od-city').value,
       neighborhood: document.getElementById('od-neighborhood').value,
       transportadora: document.getElementById('od-transportadora').value,
+      dropiGuideNumber: document.getElementById('od-guideNumber').value,
       status: document.getElementById('od-status').value,
     }),
   });
@@ -1315,6 +1619,27 @@ document.getElementById('uploadDropiBtn').addEventListener('click', async () => 
   const res = await fetch(`/api/orders/${editingOrderId}/upload-dropi`, { method: 'POST' }).then((r) => r.json());
   statusEl.style.color = res.ok ? '#16a34a' : '#dc2626';
   statusEl.textContent = res.ok ? '✔ Subido a Dropi' : res.error;
+  if (res.ok) loadOrders();
+});
+document.getElementById('generateGuideDropiBtn').addEventListener('click', async () => {
+  if (!editingOrderId) return;
+  const statusEl = document.getElementById('uploadStatus');
+  statusEl.style.color = '';
+  statusEl.textContent = 'Generando guía...';
+  const res = await fetch(`/api/orders/${editingOrderId}/generate-guide-dropi`, { method: 'POST' }).then((r) => r.json());
+  statusEl.style.color = res.ok ? '#16a34a' : '#dc2626';
+  statusEl.textContent = res.ok ? '✔ Guía generada' : res.error;
+  if (res.ok) loadOrders();
+});
+document.getElementById('refreshStatusDropiBtn').addEventListener('click', async () => {
+  if (!editingOrderId) return;
+  const statusEl = document.getElementById('uploadStatus');
+  statusEl.style.color = '';
+  statusEl.textContent = 'Consultando estado real en Dropi...';
+  const res = await fetch(`/api/orders/${editingOrderId}/refresh-status-dropi`, { method: 'POST' }).then((r) => r.json());
+  statusEl.style.color = res.ok ? '#16a34a' : '#dc2626';
+  statusEl.textContent = res.ok ? `✔ Estado actualizado: ${res.status}` : res.error;
+  if (res.ok) loadOrders();
 });
 document.getElementById('uploadSkydropxBtn').addEventListener('click', async () => {
   if (!editingOrderId) return;
@@ -1338,7 +1663,7 @@ document.getElementById('exportOrdersExcelBtn').addEventListener('click', () => 
   const headers = ['Pedido', 'Fecha', 'Cliente', 'Teléfono', 'Producto', 'Cantidad', 'Precio', 'Dirección', 'Departamento', 'Ciudad', 'Barrio', 'Transportadora', 'Estado'];
   const csvRows = [headers.join(',')];
   rows.forEach((o) => {
-    const statusInfo = STATUS_COLUMNS.find((s) => s.key === o.status);
+    const statusInfo = ORDER_STATUS_COLUMNS.find((s) => s.key === o.status);
     const line = [
       o.id, formatTime(o.createdAt), o.clientName, o.clientPhone, o.product, o.quantity, o.price,
       o.address, o.department, o.city, o.neighborhood, o.transportadora, statusInfo ? statusInfo.label : (o.status || 'Pendiente'),
@@ -1459,6 +1784,32 @@ document.getElementById('checkUpdateBtn').addEventListener('click', async () => 
 const productForm = document.getElementById('productForm');
 const cancelEditBtn = document.getElementById('cancelEditBtn');
 const formTitle = document.getElementById('formTitle');
+let quantityOffersState = [];
+
+function renderQuantityOffers() {
+  const container = document.getElementById('quantityOffersList');
+  container.innerHTML = '';
+  quantityOffersState.forEach((offer, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
+    row.innerHTML = `
+      <input type="number" min="2" value="${offer.quantity}" class="qo-quantity" placeholder="Cantidad" style="width:90px" />
+      <input type="text" value="${offer.price}" class="qo-price" placeholder="Precio del combo, ej. $140.000" style="flex:1" />
+      <button type="button" class="cancel-btn qo-delete" style="margin:0;color:#dc2626">🗑️</button>
+    `;
+    row.querySelector('.qo-quantity').addEventListener('change', (e) => { quantityOffersState[i].quantity = Number(e.target.value) || 2; });
+    row.querySelector('.qo-price').addEventListener('change', (e) => { quantityOffersState[i].price = e.target.value; });
+    row.querySelector('.qo-delete').addEventListener('click', () => {
+      quantityOffersState.splice(i, 1);
+      renderQuantityOffers();
+    });
+    container.appendChild(row);
+  });
+}
+document.getElementById('addQuantityOfferBtn').addEventListener('click', () => {
+  quantityOffersState.push({ quantity: 2, price: '' });
+  renderQuantityOffers();
+});
 
 function resetProductForm() {
   productForm.reset();
@@ -1466,6 +1817,8 @@ function resetProductForm() {
   document.getElementById('p-video-current').textContent = '';
   cancelEditBtn.style.display = 'none';
   formTitle.textContent = 'Agregar producto';
+  quantityOffersState = [];
+  renderQuantityOffers();
 }
 
 function priceTagHTML(p) {
@@ -1475,6 +1828,75 @@ function priceTagHTML(p) {
   return `<span class="price-tag after">${p.priceAfter || p.priceBefore || 'Sin precio'}</span>`;
 }
 
+// ---- Banco de medios: administrar imágenes con su regla, una por una ----
+let mediaBankProductId = null;
+
+async function openMediaBank(productId) {
+  mediaBankProductId = productId;
+  const products = await fetch('/api/products').then((r) => r.json());
+  const product = products.find((p) => p.id === productId);
+  document.getElementById('mediaBankTitle').textContent = `🖼️ Banco de medios — ${product.name}`;
+  renderMediaBankList(product);
+  document.getElementById('mediaBankOverlay').style.display = 'flex';
+}
+
+function renderMediaBankList(product) {
+  const container = document.getElementById('mediaBankList');
+  const images = (product.images || []).map((img) => (typeof img === 'string' ? { url: img, rule: '' } : img));
+  if (images.length === 0) {
+    container.innerHTML = `<div class="empty-state"><span class="empty-icon">🖼️</span>Todavía no hay imágenes — agrega la primera abajo.</div>`;
+    return;
+  }
+  container.innerHTML = images
+    .map(
+      (img, i) => `
+      <div style="display:flex;gap:10px;align-items:center;padding:8px;border:1px solid var(--border-color);border-radius:10px;margin-bottom:8px">
+        <img src="${img.url}" style="width:50px;height:50px;object-fit:cover;border-radius:8px" />
+        <input type="text" class="mb-rule-input" data-index="${i}" value="${(img.rule || '').replace(/"/g, '&quot;')}" placeholder="General (sin regla)" style="flex:1" />
+        <button type="button" class="cancel-btn mb-delete" data-index="${i}" style="margin:0;color:#dc2626">🗑️</button>
+      </div>
+    `
+    )
+    .join('');
+
+  container.querySelectorAll('.mb-rule-input').forEach((input) => {
+    input.addEventListener('change', async () => {
+      await fetch(`/api/products/${mediaBankProductId}/images/${input.dataset.index}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule: input.value }),
+      });
+      showToast('Regla guardada.');
+      loadProducts();
+    });
+  });
+  container.querySelectorAll('.mb-delete').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const updated = await fetch(`/api/products/${mediaBankProductId}/images/${btn.dataset.index}`, { method: 'DELETE' }).then((r) => r.json());
+      renderMediaBankList(updated);
+      loadProducts();
+    });
+  });
+}
+
+document.getElementById('closeMediaBankBtn').addEventListener('click', () => {
+  document.getElementById('mediaBankOverlay').style.display = 'none';
+});
+
+document.getElementById('mb-addImageBtn').addEventListener('click', async () => {
+  const file = document.getElementById('mb-newImage').files[0];
+  if (!file) return showToast('Elige una imagen primero', 'error');
+  const formData = new FormData();
+  formData.append('image', file);
+  formData.append('rule', document.getElementById('mb-newRule').value);
+  const updated = await fetch(`/api/products/${mediaBankProductId}/images`, { method: 'POST', body: formData }).then((r) => r.json());
+  document.getElementById('mb-newImage').value = '';
+  document.getElementById('mb-newRule').value = '';
+  renderMediaBankList(updated);
+  loadProducts();
+  showToast('Imagen agregada.');
+});
+
 async function loadProducts() {
   const products = await fetch('/api/products').then((r) => r.json());
   const list = document.getElementById('productList');
@@ -1483,7 +1905,7 @@ async function loadProducts() {
     const images = p.images && p.images.length ? p.images : [''];
     const thumbs = images
       .slice(0, 3)
-      .map((img) => `<img src="${img}" onerror="this.style.visibility='hidden'" />`)
+      .map((img) => `<img src="${typeof img === 'string' ? img : img.url}" onerror="this.style.visibility='hidden'" />`)
       .join('');
     const videoBadge = p.video ? '<span class="price-tag after">🎥 Video</span>' : '';
     const item = document.createElement('div');
@@ -1497,11 +1919,16 @@ async function loadProducts() {
         <div class="kw">${(p.keywords || []).join(', ')}</div>
       </div>
       <div class="actions">
+        <button data-media="${p.id}">🖼️ Fotos</button>
         <button data-edit="${p.id}">Editar</button>
         <button data-del="${p.id}">Eliminar</button>
       </div>
     `;
     list.appendChild(item);
+  });
+
+  list.querySelectorAll('[data-media]').forEach((btn) => {
+    btn.addEventListener('click', () => openMediaBank(btn.dataset.media));
   });
 
   list.querySelectorAll('[data-edit]').forEach((btn) => {
@@ -1514,6 +1941,8 @@ async function loadProducts() {
       document.getElementById('p-priceAfter').value = p.priceAfter || '';
       document.getElementById('p-keywords').value = (p.keywords || []).join(', ');
       document.getElementById('p-dropiProductId').value = p.dropiProductId || '';
+      quantityOffersState = p.quantityOffers ? [...p.quantityOffers] : [];
+      renderQuantityOffers();
       document.getElementById('p-details').value = p.details;
       document.getElementById('p-video-current').textContent = p.video
         ? '🎥 Ya tiene un video cargado. Elige otro archivo aquí solo si quieres reemplazarlo.'
@@ -1547,6 +1976,7 @@ productForm.addEventListener('submit', async (e) => {
   formData.append('priceAfter', document.getElementById('p-priceAfter').value);
   formData.append('keywords', document.getElementById('p-keywords').value);
   formData.append('dropiProductId', document.getElementById('p-dropiProductId').value);
+  formData.append('quantityOffers', JSON.stringify(quantityOffersState.filter((o) => o.price)));
   formData.append('details', document.getElementById('p-details').value);
   const imageFiles = document.getElementById('p-images').files;
   for (const file of imageFiles) formData.append('images', file);
@@ -1564,6 +1994,43 @@ productForm.addEventListener('submit', async (e) => {
 
   resetProductForm();
   loadProducts();
+});
+
+// ---------- Buscador de productos de Dropi (autocompletar ID) ----------
+document.getElementById('searchDropiBtn').addEventListener('click', async () => {
+  const query = document.getElementById('p-name').value.trim();
+  const resultsDiv = document.getElementById('dropiSearchResults');
+  resultsDiv.style.display = 'block';
+  resultsDiv.innerHTML = `<div style="text-align:center;padding:10px"><span class="loading-spinner"></span></div>`;
+
+  try {
+    const res = await fetch(`/api/dropi/search-products?q=${encodeURIComponent(query)}`).then((r) => r.json());
+    if (!res.ok) {
+      resultsDiv.innerHTML = `<p class="hint small" style="color:#dc2626">${res.error}</p>`;
+      return;
+    }
+    if (res.products.length === 0) {
+      resultsDiv.innerHTML = `<p class="hint small">No se encontraron productos en Dropi con ese nombre.</p>`;
+      return;
+    }
+    resultsDiv.innerHTML = '';
+    res.products.forEach((p) => {
+      const item = document.createElement('div');
+      item.style.cssText = 'padding:8px;border-radius:8px;cursor:pointer;border-bottom:1px solid var(--border-color)';
+      item.innerHTML = `<b>${p.name}</b><br><span class="hint small">ID: ${p.id} · $${p.suggested_price || p.sale_price}</span>`;
+      item.addEventListener('click', () => {
+        document.getElementById('p-dropiProductId').value = p.id;
+        document.getElementById('p-name').value = p.name;
+        if (p.description) document.getElementById('p-details').value = p.description;
+        if (p.suggested_price) document.getElementById('p-priceAfter').value = `$${Number(p.suggested_price).toLocaleString('es-CO')} COP`;
+        resultsDiv.style.display = 'none';
+        showToast(`Producto de Dropi vinculado: ${p.name}`);
+      });
+      resultsDiv.appendChild(item);
+    });
+  } catch (err) {
+    resultsDiv.innerHTML = `<p class="hint small" style="color:#dc2626">Error de conexión buscando en Dropi.</p>`;
+  }
 });
 
 // ---------- Secuencia de seguimiento (remarketing) ----------
@@ -1747,18 +2214,28 @@ async function sendSimulatorMessage() {
 
   const sendBtn = document.getElementById('simulatorSendBtn');
   sendBtn.disabled = true;
+
+  const container = document.getElementById('simulatorMessages');
+  const typingBubble = document.createElement('div');
+  typingBubble.className = 'chat-bubble bot';
+  typingBubble.innerHTML = `<div class="bubble-meta">Ángela</div><div><span class="loading-spinner"></span> escribiendo...</div>`;
+  container.appendChild(typingBubble);
+  container.scrollTop = container.scrollHeight;
+
   try {
     const res = await fetch('/api/simulator/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     }).then((r) => r.json());
+    typingBubble.remove();
     if (res.ok) {
       appendSimulatorBubble('bot', res.reply, res.media);
     } else {
       showToast(res.error || 'Error en la simulación', 'error');
     }
   } catch (err) {
+    typingBubble.remove();
     showToast('Error de conexión con el simulador.', 'error');
   } finally {
     sendBtn.disabled = false;
