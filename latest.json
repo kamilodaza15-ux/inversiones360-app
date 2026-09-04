@@ -1,6 +1,6 @@
 {
-  "version": "1.23.0",
-  "notes": "Etapas 2 y 3 completas: selección múltiple en Pedidos, ID de Dropi, calendario de fechas, toasts, buscador, avatares, subida automática, notas internas, comprobante PDF, dashboard con métricas, exportar a Excel, secuencia de seguimiento/remarketing con horario, simulador de pruebas, y asistente de configuración inicial. Necesita 'npm install' (se agregó pdfkit).",
+  "version": "1.26.0",
+  "notes": "Actualización enorme: corrige duplicados, consulta de ordenes flexible, intervención humana oculta, cancelación en dos pasos, nuevo flujo de datos (domicilio por defecto), ofertas por cantidad, optimización grande de tokens (catálogo dinámico + reordenado para caché), ficha de datos editable, plantilla de guía manual, programación de entregas con recordatorio automático, banco de medios con reglas por imagen, iconos de etiqueta, acordeón de Configuración, sistema de reintentos ante errores, y más.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
@@ -9,6 +9,5 @@
     "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
     "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js",
     "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
-  },
-  "newDependencies": ["pdfkit"]
+  }
 }
