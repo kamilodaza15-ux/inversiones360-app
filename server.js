@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.23.0';
+const CURRENT_VERSION = '1.26.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -234,6 +234,11 @@ function ensureFfmpegConfigured() {
 
 // Convierte un mp3 (lo que devuelve MiniMax) a ogg/opus (lo que exige
 // WhatsApp para que una nota de voz se pueda reproducir del otro lado).
+// Conversión para MiniMax (voz clonada) — esta configuración simple es la
+// que ya sabemos que funciona bien de punta a punta (WhatsApp la reproduce
+// sin problema). No agregarle parámetros extra sin probar, porque MiniMax
+// entrega un MP3 limpio que no necesita el tratamiento especial que sí
+// necesita la grabación del navegador (función de abajo).
 function convertMp3ToOggOpus(inputPath, outputPath) {
   ensureFfmpegConfigured(); // lanza el error aquí si falta ffmpeg, no al arrancar la app
   return new Promise((resolve, reject) => {
@@ -241,6 +246,27 @@ function convertMp3ToOggOpus(inputPath, outputPath) {
       .audioCodec('libopus')
       .audioBitrate('64k')
       .audioChannels(1)
+      .format('ogg')
+      .on('error', reject)
+      .on('end', resolve)
+      .save(outputPath);
+  });
+}
+
+// Conversión para la nota de voz grabada desde el navegador (botón del
+// micrófono en el panel) — el archivo que entrega MediaRecorder (WebM) suele
+// traer metadatos de duración mal formados, así que aquí sí hace falta
+// reforzar con parámetros explícitos de Opus para que WhatsApp la reproduzca
+// bien en el celular del cliente, no solo en el navegador.
+function convertRecordingToOggOpus(inputPath, outputPath) {
+  ensureFfmpegConfigured();
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .audioCodec('libopus')
+      .audioBitrate('64k')
+      .audioChannels(1)
+      .audioFrequency(48000)
+      .outputOptions(['-vbr', 'on', '-application', 'voip', '-compression_level', '10'])
       .format('ogg')
       .on('error', reject)
       .on('end', resolve)
@@ -355,6 +381,7 @@ const uploadProductMedia = upload.fields([
   { name: 'images', maxCount: 6 },
   { name: 'video', maxCount: 1 },
 ]);
+const uploadSingleImage = upload.single('image');
 
 // ---------- Subida de la muestra de voz (para clonar con MiniMax) ----------
 const uploadVoiceSample = multer({
@@ -460,6 +487,10 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
   const products = readProducts();
   const id = req.body.id || `prod-${Date.now()}`;
   const files = req.files || {};
+  let quantityOffers = [];
+  try {
+    quantityOffers = req.body.quantityOffers ? JSON.parse(req.body.quantityOffers) : [];
+  } catch (e) {}
   const newProduct = {
     id,
     name: req.body.name || '',
@@ -471,6 +502,7 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
     priceAfter: req.body.priceAfter || '',
     details: req.body.details || '',
     dropiProductId: req.body.dropiProductId || '',
+    quantityOffers,
     images: (files.images || []).map((f) => `/media/${f.filename}`),
     video: (files.video || [])[0] ? `/media/${files.video[0].filename}` : '',
   };
@@ -488,6 +520,12 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
   const files = req.files || {};
   const newImages = (files.images || []).map((f) => `/media/${f.filename}`);
   const newVideo = (files.video || [])[0] ? `/media/${files.video[0].filename}` : null;
+  let quantityOffers = existing.quantityOffers || [];
+  if (req.body.quantityOffers !== undefined) {
+    try {
+      quantityOffers = JSON.parse(req.body.quantityOffers);
+    } catch (e) {}
+  }
   const updated = {
     ...existing,
     name: req.body.name ?? existing.name,
@@ -495,6 +533,7 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
     priceAfter: req.body.priceAfter ?? existing.priceAfter,
     details: req.body.details ?? existing.details,
     dropiProductId: req.body.dropiProductId ?? (existing.dropiProductId || ''),
+    quantityOffers,
     keywords:
       req.body.keywords !== undefined
         ? req.body.keywords.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean)
@@ -505,6 +544,51 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
   products[idx] = updated;
   writeProducts(products);
   res.json(updated);
+});
+
+// ---- Banco de medios: agregar/editar/borrar UNA imagen a la vez, cada una con su propia regla de "cuándo enviarla" ----
+app.post('/api/products/:id/images', uploadSingleImage, (req, res) => {
+  const products = readProducts();
+  const idx = products.findIndex((p) => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Producto no encontrado' });
+  if (!req.file) return res.status(400).json({ error: 'No llegó ninguna imagen' });
+
+  const product = products[idx];
+  const currentImages = normalizeProductImages(product);
+  currentImages.push({ url: `/media/${req.file.filename}`, rule: req.body.rule || '' });
+  product.images = currentImages;
+  writeProducts(products);
+  res.json(product);
+});
+
+app.put('/api/products/:id/images/:index', (req, res) => {
+  const products = readProducts();
+  const idx = products.findIndex((p) => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Producto no encontrado' });
+
+  const product = products[idx];
+  const images = normalizeProductImages(product);
+  const imgIdx = Number(req.params.index);
+  if (!images[imgIdx]) return res.status(404).json({ error: 'Imagen no encontrada' });
+  images[imgIdx].rule = req.body.rule || '';
+  product.images = images;
+  writeProducts(products);
+  res.json(product);
+});
+
+app.delete('/api/products/:id/images/:index', (req, res) => {
+  const products = readProducts();
+  const idx = products.findIndex((p) => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Producto no encontrado' });
+
+  const product = products[idx];
+  const images = normalizeProductImages(product);
+  const imgIdx = Number(req.params.index);
+  if (!images[imgIdx]) return res.status(404).json({ error: 'Imagen no encontrada' });
+  images.splice(imgIdx, 1);
+  product.images = images;
+  writeProducts(products);
+  res.json(product);
 });
 
 app.delete('/api/products/:id', (req, res) => {
@@ -560,6 +644,29 @@ app.post('/api/clients/:jid/notes', (req, res) => {
   clients.set(jid, rec);
   saveClients();
   io.emit('clientUpdate', { jid, client: rec });
+  res.json({ ok: true });
+});
+
+// Editar la ficha de datos a mano — por si la IA entendió algo mal.
+app.post('/api/clients/:jid/order-data', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const rec = clients.get(jid);
+  if (!rec) return res.status(404).json({ error: 'Cliente no encontrado' });
+  rec.orderData = { ...rec.orderData, ...(req.body.orderData || {}) };
+  clients.set(jid, rec);
+  saveClients();
+  io.emit('clientUpdate', { jid, client: rec });
+  res.json({ ok: true });
+});
+
+// Programar entrega a mano, desde el panel derecho.
+app.post('/api/clients/:jid/schedule-delivery', (req, res) => {
+  const jid = decodeURIComponent(req.params.jid);
+  const rec = clients.get(jid);
+  if (!rec) return res.status(404).json({ error: 'Cliente no encontrado' });
+  if (!req.body.date) return res.status(400).json({ error: 'Falta la fecha' });
+  rec.scheduledDelivery = { date: req.body.date, reminderSent: false };
+  updateClientStatus(jid, 'programado', {});
   res.json({ ok: true });
 });
 
@@ -677,9 +784,7 @@ app.post('/api/clients/:jid/send-voice-recording', uploadVoiceRecording, async (
 
   try {
     ensureFfmpegConfigured();
-    // Aunque se llama "Mp3ToOggOpus", en realidad convierte cualquier audio
-    // de entrada (ffmpeg detecta el formato solo) — sirve igual para webm.
-    await convertMp3ToOggOpus(inputPath, oggPath);
+    await convertRecordingToOggOpus(inputPath, oggPath);
     const oggBuffer = fs.readFileSync(oggPath);
     await sendAndTrack(jid, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
 
@@ -792,17 +897,18 @@ app.get('/api/orders', (req, res) => {
 
 // Comprobante en PDF de un pedido — con el nombre de empresa que tengas en
 // Configuración, así que si lo cambias ahí, el comprobante se actualiza solo.
-app.get('/api/orders/:id/pdf', (req, res) => {
-  const order = orders.find((o) => o.id === req.params.id);
-  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
-
+// Genera el PDF del comprobante como buffer — se usa tanto para la descarga
+// manual desde el panel, como para el envío automático al cliente.
+function buildOrderPdfBuffer(order) {
   const cfg = readConfig();
   const PDFDocument = require('pdfkit');
   const doc = new PDFDocument({ margin: 50 });
+  const chunks = [];
+  doc.on('data', (chunk) => chunks.push(chunk));
 
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="comprobante-${order.id}.pdf"`);
-  doc.pipe(res);
+  const donePromise = new Promise((resolve) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+  });
 
   doc.fontSize(20).fillColor('#16a34a').text(cfg.companyName || 'Comprobante de pedido', { align: 'center' });
   doc.moveDown(0.3);
@@ -839,8 +945,42 @@ app.get('/api/orders/:id/pdf', (req, res) => {
 
   doc.moveDown(2);
   doc.fontSize(9).fillColor('#9ca3af').text(`Generado por ${cfg.companyName || 'Inversiones 360 CHAT'}`, { align: 'center' });
-
   doc.end();
+
+  return donePromise;
+}
+
+// Manda el comprobante por WhatsApp al cliente — SOLO la primera vez que el
+// pedido pasa de "Pendiente" a cualquier estado que no sea "Cancelado" (o
+// sea, cuando de verdad se sube a Dropi/Skydropx). No se manda al crearlo
+// (todavía podría no confirmarse por temas logísticos), ni se repite en
+// cambios de estado posteriores.
+async function sendOrderPdfIfNeeded(order) {
+  if (order.pdfSent) return; // ya se mandó una vez, nunca se repite
+  if (!order.clientJid) return; // pedido sin cliente real de WhatsApp asociado
+  if (order.status === 'cancelado') return;
+  try {
+    const pdfBuffer = await buildOrderPdfBuffer(order);
+    if (!sock) return;
+    await sendAndTrack(order.clientJid, {
+      document: pdfBuffer,
+      mimetype: 'application/pdf',
+      fileName: `comprobante-${order.id}.pdf`,
+    });
+    appendChatLog(order.clientJid, { from: 'bot', text: `(comprobante ${order.id} enviado)`, type: 'text', timestamp: Date.now() });
+    updateOrder(order.id, { pdfSent: true });
+  } catch (e) {
+    console.error('No se pudo enviar el comprobante PDF al cliente:', e);
+  }
+}
+
+app.get('/api/orders/:id/pdf', async (req, res) => {
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+  const pdfBuffer = await buildOrderPdfBuffer(order);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="comprobante-${order.id}.pdf"`);
+  res.send(pdfBuffer);
 });
 
 app.post('/api/orders', (req, res) => {
@@ -912,15 +1052,221 @@ app.post('/api/clients/:jid/manual-order', (req, res) => {
 // Estas dos funciones quedan listas para conectar la API real de cada
 // plataforma en cuanto tengamos su documentación — por ahora, avisan
 // honestamente que falta la conexión, sin romper nada más de la app.
+// ---------- Integración real con Dropi ----------
+const DROPI_WHITE_BRAND_ID = 'df3e6b0bb66ceaadca4f84cbc371fd66e04d20fe51fc414da8d1b84d31d178de';
+let dropiTokenCache = null; // se guarda en memoria, se pide de nuevo si expira
+
+function dropiBaseUrl(cfg) {
+  return cfg.dropiUseTestEnv ? 'https://test-api.dropi.co/api' : 'https://api.dropi.co/api';
+}
+
+// Quita tildes y pasa a mayúsculas — Dropi espera los nombres de
+// departamento/ciudad así (ej. "CUNDINAMARCA", "BOGOTA").
+function toDropiPlaceName(text) {
+  return (text || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+}
+
+// Lee la respuesta de Dropi con cuidado — si por algún motivo no es JSON de
+// verdad (por ejemplo, si Dropi devuelve una página de error HTML, o si algo
+// en la red la interceptó), esto da un mensaje claro en vez del confuso
+// "Unexpected token '<'" que salía antes.
+async function readDropiResponse(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(
+      `Dropi respondió algo inesperado (código ${res.status}), no fue posible leerlo — revisa tu conexión a internet o intenta de nuevo. Detalle: ${text.slice(0, 150)}`
+    );
+  }
+}
+
+async function dropiLogin(cfg) {
+  if (!cfg.dropiEmail || !cfg.dropiPassword) {
+    throw new Error('Falta configurar tu correo y contraseña de Dropi en Configuración.');
+  }
+  let res;
+  try {
+    res = await fetch(`${dropiBaseUrl(cfg)}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: cfg.dropiEmail,
+        password: cfg.dropiPassword,
+        white_brand_id: DROPI_WHITE_BRAND_ID,
+      }),
+    });
+  } catch (e) {
+    throw new Error(`No se pudo conectar con Dropi — revisa tu conexión a internet. Detalle: ${e.message}`);
+  }
+  const data = await readDropiResponse(res);
+  if (!data.isSuccess) {
+    throw new Error(data.message || `Dropi rechazó el inicio de sesión (código ${res.status}) — revisa el correo y la contraseña.`);
+  }
+  dropiTokenCache = data.token;
+  return data.token;
+}
+
+// Llama cualquier endpoint de Dropi ya autenticado — si el token venció,
+// vuelve a hacer login solo, una vez, y reintenta.
+async function dropiRequest(cfg, path, options = {}) {
+  if (!dropiTokenCache) {
+    await dropiLogin(cfg);
+  }
+  const doRequest = async () => {
+    let res;
+    try {
+      res = await fetch(`${dropiBaseUrl(cfg)}${path}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${dropiTokenCache}`,
+          ...(options.headers || {}),
+        },
+      });
+    } catch (e) {
+      throw new Error(`No se pudo conectar con Dropi — revisa tu conexión a internet. Detalle: ${e.message}`);
+    }
+    return readDropiResponse(res);
+  };
+
+  let data = await doRequest();
+  if (data.status === 401 || data.message === 'Token is Expired') {
+    await dropiLogin(cfg);
+    data = await doRequest();
+  }
+  return data;
+}
+
+// Buscar productos en tu catálogo de Dropi por nombre — para el buscador
+// del formulario de productos (autocompletar ID/nombre/precio).
+async function dropiSearchProducts(cfg, keywords) {
+  const data = await dropiRequest(cfg, '/products/index', {
+    method: 'POST',
+    body: JSON.stringify({ keywords: keywords || '', pageSize: 15, startData: 0 }),
+  });
+  if (!data.isSuccess) throw new Error(data.message || 'No se pudo buscar en Dropi.');
+  return data.objects || [];
+}
+
+async function dropiGetProduct(cfg, dropiProductId) {
+  const data = await dropiRequest(cfg, `/products/${dropiProductId}`, { method: 'GET' });
+  if (!data.isSuccess) throw new Error(data.message || 'No se encontró ese producto en Dropi.');
+  return data.objects;
+}
+
 async function uploadOrderToDropi(order) {
   const cfg = readConfig();
-  if (!cfg.dropiApiKey) {
-    throw new Error('Falta configurar la API de Dropi (todavía no tenemos la documentación/credenciales conectadas).');
+  if (!order.dropiProductId && !order.product) {
+    throw new Error('Este pedido no tiene un producto con ID de Dropi asociado.');
   }
-  // TODO: cuando tengamos la documentación real de la API de Dropi, aquí va
-  // la llamada real para crear la orden/guía.
-  throw new Error('La conexión real con Dropi todavía no está implementada.');
+  if (!order.department || !order.city) {
+    throw new Error('Falta el departamento y/o ciudad del pedido — revísalos antes de subir a Dropi.');
+  }
+
+  const [nombre, ...resto] = (order.clientName || 'Cliente').trim().split(' ');
+  const apellido = resto.join(' ') || '.'; // Dropi exige apellido, algunos clientes solo dan un nombre
+
+  const body = {
+    state: toDropiPlaceName(order.department),
+    city: toDropiPlaceName(order.city),
+    name: nombre,
+    surname: apellido,
+    dir: order.address || 'Recogida en oficina',
+    notes: order.neighborhood ? `Barrio: ${order.neighborhood}` : '',
+    payment_method_id: 1,
+    phone: order.clientPhone,
+    rate_type: 'CON RECAUDO', // pago contra entrega — el modelo de negocio de la mayoría de dropshippers en Colombia
+    type: 'FINAL_ORDER',
+    total_order: parseInt(String(order.price || '0').replace(/[^\d]/g, ''), 10) || 0,
+    products: [
+      {
+        id: parseInt(order.dropiProductId, 10),
+        price: parseInt(String(order.price || '0').replace(/[^\d]/g, ''), 10) || 0,
+        variation_id: null,
+        quantity: order.quantity || 1,
+      },
+    ],
+  };
+
+  const data = await dropiRequest(cfg, '/orders/myorders', { method: 'POST', body: JSON.stringify(body) });
+  if (!data.isSuccess) {
+    throw new Error(data.message || 'Dropi rechazó la orden.');
+  }
+
+  updateOrder(order.id, {
+    dropiOrderId: data.objects.id,
+    status: 'confirmado',
+  });
+  // Se manda el comprobante justo aquí — la primera vez que el pedido pasa
+  // de Pendiente a Confirmado, nunca antes ni en cambios posteriores.
+  await sendOrderPdfIfNeeded(orders.find((o) => o.id === order.id));
+  return data.objects;
 }
+
+async function generateDropiGuide(orderId) {
+  const cfg = readConfig();
+  const order = orders.find((o) => o.id === orderId);
+  if (!order) throw new Error('Pedido no encontrado');
+  if (!order.dropiOrderId) throw new Error('Este pedido todavía no se ha subido a Dropi.');
+
+  const data = await dropiRequest(cfg, `/orders/myorders/${order.dropiOrderId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: 'GUIA_GENERADA' }),
+  });
+  if (!data.isSuccess) {
+    throw new Error(data.message || 'No se pudo generar la guía en Dropi.');
+  }
+  updateOrder(orderId, { status: 'guia_generada' });
+
+  // Mensaje aparte (distinto al comprobante) — solo cuando ya hay guía de verdad.
+  if (order.clientJid) {
+    try {
+      const guideNumber = data.objects?.shipping_guide || order.dropiGuideNumber || '';
+      const text = `¡Tu pedido ya tiene guía de envío! 📦${guideNumber ? ` N° ${guideNumber}` : ''} — debería llegarte en aproximadamente 3 a 6 días hábiles. Gracias por tu compra 🎉`;
+      await sendAndTrack(order.clientJid, { text });
+      appendChatLog(order.clientJid, { from: 'bot', text, type: 'text', timestamp: Date.now() });
+    } catch (e) {
+      console.error('No se pudo enviar el aviso de guía generada:', e);
+    }
+  }
+
+  return data;
+}
+
+// Consulta el estado REAL en Dropi (no solo el que tenemos guardado nosotros).
+async function checkDropiOrderStatus(orderId) {
+  const cfg = readConfig();
+  const order = orders.find((o) => o.id === orderId);
+  if (!order || !order.dropiOrderId) return null;
+
+  const data = await dropiRequest(cfg, `/orders/myorders/${order.dropiOrderId}`, { method: 'GET' });
+  if (!data.isSuccess) return null;
+
+  const DROPI_STATUS_MAP = {
+    PENDIENTE: 'pendiente',
+    GUIA_GENERADA: 'guia_generada',
+    EN_TRANSITO: 'en_camino',
+    NOVEDAD: 'con_novedad',
+    ENTREGADO: 'entregado',
+    DEVOLUCION: 'devuelto',
+    CANCELADO: 'cancelado',
+  };
+  const mappedStatus = DROPI_STATUS_MAP[data.objects.status] || order.status;
+
+  updateOrder(orderId, {
+    status: mappedStatus,
+    transportadora: data.objects.shipping_company || order.transportadora,
+    dropiGuideNumber: data.objects.shipping_guide || null,
+    dropiSticker: data.objects.sticker || null,
+  });
+  return data.objects;
+}
+
 
 async function uploadOrderToSkydropx(order) {
   const cfg = readConfig();
@@ -966,6 +1312,35 @@ app.post('/api/orders/:id/upload-dropi', async (req, res) => {
   }
 });
 
+app.post('/api/orders/:id/generate-guide-dropi', async (req, res) => {
+  try {
+    await generateDropiGuide(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/orders/:id/refresh-status-dropi', async (req, res) => {
+  try {
+    const result = await checkDropiOrderStatus(req.params.id);
+    if (!result) return res.status(400).json({ error: 'Este pedido no tiene una orden de Dropi asociada, o no se pudo consultar.' });
+    res.json({ ok: true, status: result.status });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/dropi/search-products', async (req, res) => {
+  try {
+    const cfg = readConfig();
+    const results = await dropiSearchProducts(cfg, req.query.q || '');
+    res.json({ ok: true, products: results });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post('/api/orders/:id/upload-skydropx', async (req, res) => {
   const order = orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -1003,11 +1378,15 @@ app.post('/api/simulator/message', async (req, res) => {
     simulationSession.history.push({ role: 'user', content: text });
 
     let aiMessage = await getAIMessage(simulationSession.history, [
-      productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool,
+      productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool, scheduleDeliveryTool,
     ]);
     const mediaPreview = [];
+    let rounds = 0;
 
-    if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+    // Igual que en el flujo real: se deja que la IA llame herramientas las
+    // veces que necesite seguidas, no solo una vez.
+    while (aiMessage.tool_calls && aiMessage.tool_calls.length > 0 && rounds < 5) {
+      rounds += 1;
       simulationSession.history.push({
         role: 'assistant',
         content: aiMessage.content || null,
@@ -1023,8 +1402,9 @@ app.post('/api/simulator/message', async (req, res) => {
         let resultText = 'No se encontró el producto solicitado.';
         if (toolCall.function.name === 'enviar_imagen_producto') {
           const product = findProductByQuery(args.producto);
-          if (product && product.images?.length) {
-            mediaPreview.push(...product.images.map((url) => ({ type: 'image', url })));
+          const bestImages = findBestMatchingImages(product, args.contexto);
+          if (bestImages.length > 0) {
+            mediaPreview.push(...bestImages.map((img) => ({ type: 'image', url: img.url })));
             resultText = `Imagen(es) de "${product.name}" mostradas en la simulación (no se envían a ningún WhatsApp real).`;
           } else {
             resultText = 'No hay imágenes disponibles para ese producto.';
@@ -1047,18 +1427,25 @@ app.post('/api/simulator/message', async (req, res) => {
           resultText = `Datos guardados (solo en esta simulación, no toca clientes reales). ${describeMissingOrderFields(simulationSession.orderData)}`;
         } else if (toolCall.function.name === 'consultar_estado_pedido') {
           resultText = 'En el simulador no hay pedidos reales que consultar — esto es solo una prueba.';
+        } else if (toolCall.function.name === 'programar_entrega') {
+          resultText = `Entrega programada para el ${args.fecha} (solo en la simulación).`;
+        } else {
+          resultText = 'Esa función no existe. Responde con texto normal, usando la frase obligatoria si corresponde.';
         }
 
         simulationSession.history.push({ role: 'tool', tool_call_id: toolCall.id, content: resultText });
       }
 
-      aiMessage = await getAIMessage(simulationSession.history);
+      aiMessage = await getAIMessage(simulationSession.history, [
+        productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool, scheduleDeliveryTool,
+      ]);
     }
 
     const reply = (aiMessage.content || '').trim() || 'Listo 😊';
     simulationSession.history.push({ role: 'assistant', content: reply });
 
-    res.json({ ok: true, reply, media: mediaPreview, orderData: simulationSession.orderData });
+    // En el simulador también se limpia — así ves exactamente lo que vería un cliente real.
+    res.json({ ok: true, reply: stripInternalMarkers(reply), media: mediaPreview, orderData: simulationSession.orderData });
   } catch (err) {
     res.status(500).json({ error: 'Error en la simulación: ' + err.message });
   }
@@ -1160,6 +1547,38 @@ setInterval(() => {
   checkFollowUps().catch((e) => console.error('Error revisando seguimientos:', e));
 }, 5 * 60 * 1000); // revisa cada 5 minutos
 
+// ---------- Programación de entregas: recordatorio automático 2 días antes ----------
+async function checkScheduledDeliveries() {
+  if (!sock) return;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  for (const [jid, client] of clients.entries()) {
+    const sched = client.scheduledDelivery;
+    if (!sched || !sched.date || sched.reminderSent) continue;
+    const deliveryDate = new Date(sched.date + 'T00:00:00');
+    const daysUntil = Math.round((deliveryDate - today) / (24 * 60 * 60 * 1000));
+    if (daysUntil !== 2) continue; // se manda exactamente 2 días antes
+
+    try {
+      const producto = client.orderData?.producto || 'tu pedido';
+      const text = `¡Hola! 😊 Te recuerdo que tu pedido de *${producto}* está programado para el ${sched.date} — ¿confirmas que te lo enviamos?`;
+      await sendAndTrack(jid, { text });
+      appendChatLog(jid, { from: 'bot', text, type: 'text', timestamp: Date.now() });
+      client.scheduledDelivery.reminderSent = true;
+      clients.set(jid, client);
+      saveClients();
+      io.emit('log', `📅 Recordatorio de entrega programada enviado a ${jid.split('@')[0]}`);
+    } catch (e) {
+      console.error('Error enviando recordatorio de entrega programada:', e);
+    }
+  }
+}
+
+setInterval(() => {
+  checkScheduledDeliveries().catch((e) => console.error('Error revisando entregas programadas:', e));
+}, 60 * 60 * 1000); // revisa cada hora (solo importa el día, no la hora exacta)
+
 app.get('/api/followup-config', (req, res) => {
   const cfg = readConfig();
   res.json({
@@ -1191,6 +1610,12 @@ function getOpenAIClient(cfg) {
   const OpenAI = require('openai');
   return new OpenAI({ apiKey: cfg.openaiApiKey });
 }
+function getDeepSeekClient(cfg) {
+  // DeepSeek habla el mismo formato de la API de OpenAI — solo cambia la
+  // URL base y la clave. Se reutiliza el mismo paquete "openai".
+  const OpenAI = require('openai');
+  return new OpenAI({ apiKey: cfg.deepseekApiKey, baseURL: 'https://api.deepseek.com' });
+}
 
 // ---------- Tool: enviar imagen o video del producto ----------
 // En vez de depender de palabras clave, dejamos que el modelo decida cuándo
@@ -1209,6 +1634,11 @@ const productImageTool = {
           type: 'string',
           description:
             'Nombre (o parte del nombre) del producto del que el cliente quiere ver fotos. Si solo hay un producto en el catálogo, usa ese nombre.',
+        },
+        contexto: {
+          type: 'string',
+          description:
+            'Qué está preguntando el cliente en este momento (ej. "precio", "modo de uso", "empaque") — así se manda la foto configurada para ese contexto, si existe. Si no aplica, deja vacío.',
         },
       },
       required: ['producto'],
@@ -1279,6 +1709,22 @@ const checkOrderStatusTool = {
   },
 };
 
+const scheduleDeliveryTool = {
+  type: 'function',
+  function: {
+    name: 'programar_entrega',
+    description:
+      'Guarda una fecha futura para entregar el pedido, cuando el cliente dice que lo quiere pero para más adelante (ej. "lo quiero pero para el 15", "hasta la próxima semana"). Antes de usarla, ya debes tener guardados con actualizar_datos_pedido todos los datos normales del pedido (nombre, dirección, producto, etc.) — la única diferencia es que no se cierra ahora, sino en la fecha indicada.',
+    parameters: {
+      type: 'object',
+      properties: {
+        fecha: { type: 'string', description: 'Fecha en formato YYYY-MM-DD' },
+      },
+      required: ['fecha'],
+    },
+  },
+};
+
 // Cuando la IA llama actualizar_datos_pedido: solo actualiza los campos que
 // vinieron con valor (no borra los demás), y avanza el tipo de entrega si
 // vino. Devuelve un texto para que la IA sepa qué le falta todavía.
@@ -1309,18 +1755,48 @@ function describeMissingOrderFields(orderData) {
 }
 
 // Cuando la IA llama consultar_estado_pedido: busca de verdad en Pedidos,
+// Guarda la fecha de entrega programada — el pedido no se cierra ahora, se
+// deja para que el sistema le pregunte al cliente unos días antes.
+function handleScheduleDelivery(jid, args) {
+  ensureClientRecord(jid);
+  const client = clients.get(jid);
+  client.scheduledDelivery = { date: args.fecha, reminderSent: false };
+  updateClientStatus(jid, 'programado', {});
+  return `Entrega programada para el ${args.fecha}. El sistema le va a preguntar al cliente unos días antes si confirma.`;
+}
+
 // por número de orden si lo dio, o si no, el pedido más reciente de este
 // cliente. Nunca inventa el estado.
-function handleCheckOrderStatus(jid, args) {
+async function handleCheckOrderStatus(jid, args) {
   let order = null;
   if (args.numeroOrden) {
-    order = orders.find((o) => o.id.toLowerCase() === String(args.numeroOrden).trim().toLowerCase());
+    // Acepta "ORD-0007", "0007", "7", con o sin ceros a la izquierda — la
+    // gente casi nunca escribe el "ORD-" completo al preguntar.
+    const raw = String(args.numeroOrden).trim().toLowerCase();
+    const digitsOnly = raw.replace(/\D/g, '').replace(/^0+/, '');
+    order = orders.find((o) => {
+      const idLower = o.id.toLowerCase();
+      const idDigits = idLower.replace(/\D/g, '').replace(/^0+/, '');
+      return idLower === raw || idLower === `ord-${raw}` || (digitsOnly && idDigits === digitsOnly);
+    });
   }
   if (!order) {
     const clientOrders = orders.filter((o) => o.clientJid === jid).sort((a, b) => b.createdAt - a.createdAt);
     order = clientOrders[0] || null;
   }
   if (!order) return 'Este cliente no tiene ningún pedido registrado todavía.';
+
+  // Si el pedido ya está en Dropi, se consulta el estado REAL antes de
+  // responder — si falla por cualquier motivo, se usa el que ya teníamos
+  // guardado nosotros, para no dejar al cliente sin respuesta.
+  if (order.dropiOrderId) {
+    try {
+      await checkDropiOrderStatus(order.id);
+      order = orders.find((o) => o.id === order.id); // recargar con el estado actualizado
+    } catch (e) {
+      console.error('No se pudo refrescar el estado de Dropi:', e);
+    }
+  }
 
   const statusLabel = ORDER_STATUS_LABELS[order.status] || order.status;
   return `Pedido ${order.id}: producto "${order.product}", estado actual: ${statusLabel}.${order.transportadora ? ` Transportadora: ${order.transportadora}.` : ''}`;
@@ -1331,14 +1807,33 @@ function handleCheckOrderStatus(jid, args) {
 // tanto para "Activar bot (re-disparar último mensaje)" como para "Activar
 // asistente de un producto" desde el panel derecho. Es básicamente el mismo
 // flujo que corre automáticamente en processMessage, pero disparado a mano.
-async function generateAndSendReply(userId) {
-  const cfg = readConfig();
-  const history = conversations.get(userId);
-  if (!history) throw new Error('No hay conversación con este cliente todavía');
+// Ejecuta el ciclo completo de herramientas de la IA: la deja llamar
+// funciones las veces que necesite seguidas (no solo una vez) hasta que ya
+// no pida ninguna más — antes, después de la primera ronda de herramientas,
+// se le quitaba el acceso a ellas en la segunda llamada, y si intentaba usar
+// otra (algo común cuando el cliente da varios datos juntos), Groq/OpenAI
+// tronaba con "Tool choice is none, but model called a tool" y el bot se
+// quedaba mudo. Con el límite de 5 vueltas se evita un ciclo infinito si algo
+// sale mal.
+// Quita las frases "señal interna" (como la de intervención humana) antes de
+// mandar o guardar el texto que sí ve el cliente — la IA las incluye a
+// propósito para que nuestro sistema las detecte, pero nunca deben llegar a
+// WhatsApp tal cual.
+function stripInternalMarkers(text) {
+  return (text || '')
+    .replace(/🆘\s*NECESITA INTERVENCIÓN HUMANA\s*🆘/g, '')
+    .replace(/⚠️\s*INTENTO DE CANCELACIÓN\s*⚠️/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
-  let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool]);
+async function runToolLoop(userId, history) {
+  const tools = [productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool, scheduleDeliveryTool];
+  let aiMessage = await getAIMessage(history, tools);
+  let rounds = 0;
 
-  if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
+  while (aiMessage.tool_calls && aiMessage.tool_calls.length > 0 && rounds < 5) {
+    rounds += 1;
     history.push({
       role: 'assistant',
       content: aiMessage.content || null,
@@ -1354,7 +1849,7 @@ async function generateAndSendReply(userId) {
       let resultText = 'No se encontró el producto solicitado.';
       if (toolCall.function.name === 'enviar_imagen_producto') {
         const product = findProductByQuery(args.producto);
-        const sent = await sendProductImages(userId, product);
+        const sent = await sendProductImages(userId, product, args.contexto);
         resultText = sent
           ? `Imagen(es) de "${product.name}" enviadas correctamente.`
           : 'No hay imágenes disponibles para ese producto.';
@@ -1367,36 +1862,70 @@ async function generateAndSendReply(userId) {
       } else if (toolCall.function.name === 'actualizar_datos_pedido') {
         resultText = handleUpdateOrderData(userId, args);
       } else if (toolCall.function.name === 'consultar_estado_pedido') {
-        resultText = handleCheckOrderStatus(userId, args);
+        resultText = await handleCheckOrderStatus(userId, args);
+      } else if (toolCall.function.name === 'programar_entrega') {
+        resultText = handleScheduleDelivery(userId, args);
+      } else {
+        // El modelo inventó el nombre de una función que no existe — se le
+        // avisa así, en vez de dejarlo sin respuesta, para que siga con
+        // texto normal en la siguiente vuelta.
+        resultText = 'Esa función no existe. Responde con texto normal, usando la frase obligatoria si corresponde.';
       }
 
       history.push({ role: 'tool', tool_call_id: toolCall.id, content: resultText });
     }
 
-    aiMessage = await getAIMessage(history);
+    aiMessage = await getAIMessage(history, tools);
   }
+
+  return aiMessage;
+}
+
+async function generateAndSendReply(userId) {
+  const cfg = readConfig();
+  const history = conversations.get(userId);
+  if (!history) throw new Error('No hay conversación con este cliente todavía');
+
+  const aiMessage = await runToolLoop(userId, history);
 
   const reply = (aiMessage.content || '').trim() || 'Listo 😊';
   history.push({ role: 'assistant', content: reply });
   saveConversations();
-  appendChatLog(userId, { from: 'bot', text: reply, type: 'text', timestamp: Date.now() });
 
-  const isOrderConfirmation = reply.includes('ORDEN DE COMPRA REGISTRADA') || reply.includes('PEDIDO CANCELADO');
+  // El cliente nunca debe ver las frases "señal interna" (como la de
+  // intervención humana) — se usan para que nuestro sistema las detecte,
+  // pero se limpian del texto que de verdad se manda/guarda como visto.
+  const clientReply = stripInternalMarkers(reply);
+
+  const isOrderConfirmation = reply.includes('ORDEN DE COMPRA REGISTRADA');
   const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
   const minimaxReady = cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
   const shouldReplyWithVoice = !isOrderConfirmation && minimaxReady && voiceMode === 'voice';
 
   if (shouldReplyWithVoice) {
     try {
-      await sendVoiceReply(userId, reply);
+      const oggFilename = await sendVoiceReply(userId, clientReply);
+      appendChatLog(userId, { from: 'bot', text: clientReply, type: 'voice', mediaUrl: `/media/${oggFilename}`, timestamp: Date.now() });
     } catch (err) {
       console.error('Error generando audio con MiniMax, se responde en texto:', err);
-      await sendAndTrack(userId, { text: reply });
+      await sendAndTrack(userId, { text: clientReply });
+      appendChatLog(userId, { from: 'bot', text: clientReply, type: 'text', timestamp: Date.now() });
     }
   } else {
-    await sendAndTrack(userId, { text: reply });
+    await sendAndTrack(userId, { text: clientReply });
+    appendChatLog(userId, { from: 'bot', text: clientReply, type: 'text', timestamp: Date.now() });
   }
 
+  await handlePostReplyMarkers(userId, reply, cfg);
+
+  return reply;
+}
+
+// Maneja lo que pasa DESPUÉS de mandar la respuesta, según las frases
+// internas que la IA haya incluido (venta cerrada, intento de cancelación,
+// intervención humana necesaria) — se usa tanto en el flujo real de
+// WhatsApp como en "Activar bot" desde el panel.
+async function handlePostReplyMarkers(userId, reply, cfg) {
   if (reply.includes('ORDEN DE COMPRA REGISTRADA') && cfg.notificationPhoneNumber) {
     try {
       await notifyOwnerOfSale(cfg, userId, reply);
@@ -1409,21 +1938,21 @@ async function generateAndSendReply(userId) {
     updateClientStatus(userId, 'comprado', { lastOrderSummary: reply, ...(name ? { name } : {}) });
     await autoCreateOrderFromSummary(userId, clients.get(userId), reply);
   }
-  if (reply.includes('PEDIDO CANCELADO') && cfg.notificationPhoneNumber) {
-    try {
-      await notifyOwnerOfCancellation(cfg, userId, reply);
-    } catch (err) {
-      console.error('Error notificando la cancelación:', err);
-    }
-  }
-  if (reply.includes('PEDIDO CANCELADO')) {
-    updateClientStatus(userId, 'cancelado', {});
+
+  // ---- Cancelación en dos pasos: primero se intenta retener, solo se avisa si insiste ----
+  const clientBeforeThisReply = clients.get(userId);
+  const wasAlreadyAttemptingCancel = clientBeforeThisReply?.status === 'intento_cancelacion';
+
+  if (reply.includes('INTENTO DE CANCELACIÓN')) {
+    updateClientStatus(userId, 'intento_cancelacion', {});
+    const activeOrder = orders.find((o) => o.clientJid === userId && !['entregado', 'devuelto', 'cancelado'].includes(o.status));
+    if (activeOrder) updateOrder(activeOrder.id, { status: 'intento_cancelacion' });
   }
 
   if (reply.includes('NECESITA INTERVENCIÓN HUMANA')) {
     if (cfg.notificationPhoneNumber) {
       try {
-        await notifyOwnerOfIntervention(cfg, userId, reply);
+        await notifyOwnerOfIntervention(cfg, userId, reply, wasAlreadyAttemptingCancel);
       } catch (err) {
         console.error('Error notificando la intervención:', err);
       }
@@ -1431,8 +1960,6 @@ async function generateAndSendReply(userId) {
     const minutes = Number(cfg.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
     pauseChat(userId, minutes);
   }
-
-  return reply;
 }
 
 function findProductByQuery(query) {
@@ -1449,12 +1976,35 @@ function findProductByQuery(query) {
   return products.length === 1 ? products[0] : null;
 }
 
-async function sendProductImages(userId, product) {
-  if (!product || !Array.isArray(product.images) || product.images.length === 0) {
-    return false;
+// Cada imagen de un producto puede tener su propia "regla" de cuándo
+// enviarla (ej. "cuando pregunte el precio"). Esto elige cuáles mandar según
+// lo que el cliente está preguntando en este momento — si ninguna regla
+// coincide, usa las que no tienen regla (generales); si tampoco hay
+// generales, manda todas (compatibilidad con productos viejos).
+function normalizeProductImages(product) {
+  return (product?.images || []).map((img) => (typeof img === 'string' ? { url: img, rule: '' } : img));
+}
+function findBestMatchingImages(product, contexto) {
+  const images = normalizeProductImages(product);
+  if (images.length === 0) return [];
+  if (!contexto) {
+    const general = images.filter((i) => !i.rule);
+    return general.length > 0 ? general : images;
   }
-  for (const imgRelPath of product.images) {
-    const imgPath = path.join(__dirname, imgRelPath.replace(/^\//, ''));
+  const contextoLower = contexto.toLowerCase();
+  const matching = images.filter(
+    (i) => i.rule && (contextoLower.includes(i.rule.toLowerCase()) || i.rule.toLowerCase().includes(contextoLower))
+  );
+  if (matching.length > 0) return matching;
+  const general = images.filter((i) => !i.rule);
+  return general.length > 0 ? general : images;
+}
+
+async function sendProductImages(userId, product, contexto) {
+  const images = findBestMatchingImages(product, contexto);
+  if (images.length === 0) return false;
+  for (const img of images) {
+    const imgPath = path.join(__dirname, img.url.replace(/^\//, ''));
     if (fs.existsSync(imgPath)) {
       await sendAndTrack(userId, { image: fs.readFileSync(imgPath) });
     }
@@ -1637,7 +2187,11 @@ async function sendVoiceReply(userId, text) {
   const speechText = prepareTextForSpeech(text);
   const audioBuffer = await minimaxTextToSpeech(cfg, speechText);
   const mp3Path = path.join(TMP_DIR, `voice-reply-${Date.now()}.mp3`);
-  const oggPath = mp3Path.replace(/\.mp3$/, '.ogg');
+  // El ogg final queda en MEDIA_DIR (no en TMP_DIR) para poder reproducirlo
+  // también desde el panel — antes solo se mandaba por WhatsApp y se borraba,
+  // así que en Chats se veía como texto plano, sin poder escucharlo ahí.
+  const oggFilename = `voice-bot-${Date.now()}.ogg`;
+  const oggPath = path.join(MEDIA_DIR, oggFilename);
   fs.writeFileSync(mp3Path, audioBuffer);
   try {
     // WhatsApp exige que las notas de voz vengan en OGG/Opus. MiniMax nos da
@@ -1648,9 +2202,9 @@ async function sendVoiceReply(userId, text) {
     // ptt: true hace que llegue como nota de voz (con el ícono de
     // micrófono), no como un archivo de audio adjunto normal.
     await sendAndTrack(userId, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+    return oggFilename;
   } finally {
     fs.unlink(mp3Path, () => {});
-    fs.unlink(oggPath, () => {});
   }
 }
 
@@ -1729,8 +2283,11 @@ async function notifyOwnerOfCancellation(cfg, clientUserId, reply) {
   await notifyOwner(cfg, clientUserId, '❌ *Pedido cancelado*', reply);
 }
 
-async function notifyOwnerOfIntervention(cfg, clientUserId, reply) {
-  await notifyOwner(cfg, clientUserId, '🆘 *Este chat necesita intervención humana*', reply);
+async function notifyOwnerOfIntervention(cfg, clientUserId, reply, isCancellationInsisted) {
+  const title = isCancellationInsisted
+    ? '🆘 *Intervención necesaria — el cliente insiste en cancelar su pedido*'
+    : '🆘 *Este chat necesita intervención humana*';
+  await notifyOwner(cfg, clientUserId, title, reply);
 }
 
 
@@ -1743,7 +2300,6 @@ async function getAIMessage(messages, tools, attempt = 1) {
   const payload = {
     messages,
     temperature: 0.6,
-    max_tokens: 400,
   };
   if (tools) {
     payload.tools = tools;
@@ -1755,7 +2311,18 @@ async function getAIMessage(messages, tools, attempt = 1) {
       const openai = getOpenAIClient(cfg);
       const completion = await openai.chat.completions.create({
         ...payload,
+        max_completion_tokens: 400, // los modelos nuevos de OpenAI ya no aceptan "max_tokens"
         model: cfg.openaiModel || 'gpt-4o-mini',
+      });
+      return completion.choices[0].message;
+    }
+
+    if (cfg.aiProvider === 'deepseek') {
+      const deepseek = getDeepSeekClient(cfg);
+      const completion = await deepseek.chat.completions.create({
+        ...payload,
+        max_tokens: 400, // DeepSeek usa el nombre clásico, igual que Groq
+        model: cfg.deepseekModel || 'deepseek-v4-flash',
       });
       return completion.choices[0].message;
     }
@@ -1763,12 +2330,22 @@ async function getAIMessage(messages, tools, attempt = 1) {
     const groq = getGroqClient(cfg);
     const completion = await groq.chat.completions.create({
       ...payload,
+      max_tokens: 400, // Groq sí usa el nombre clásico
       model: cfg.groqModel || 'llama-3.1-8b-instant',
     });
     return completion.choices[0].message;
   } catch (err) {
     const isRateLimit = err?.status === 429;
+    // Falla conocida de algunos modelos "gpt-oss" en Groq: a veces pegan un
+    // trozo de su formato interno (ej. "<|channel|>commentary") al nombre de
+    // la función que intentan llamar, y Groq rechaza la petición completa
+    // porque el nombre ya no coincide con ninguna herramienta real. Un
+    // reintento casi siempre lo resuelve, así que no vale la pena rendirse
+    // de una con el mensaje de "problema técnico".
+    const errorText = JSON.stringify(err?.error || err?.message || '');
+    const isCorruptedToolCall = errorText.includes('tool_use_failed') || errorText.includes('<|channel|>');
     const MAX_ATTEMPTS = 3;
+
     if (isRateLimit && attempt < MAX_ATTEMPTS) {
       // Groq/OpenAI indican cuántos segundos esperar en este header.
       const retryAfterHeader = err?.headers?.['retry-after'];
@@ -1778,6 +2355,11 @@ async function getAIMessage(messages, tools, attempt = 1) {
         `⏳ Límite de la IA alcanzado, reintentando en ${Math.ceil(waitSeconds)}s (intento ${attempt}/${MAX_ATTEMPTS})...`
       );
       await sleep((waitSeconds + 1) * 1000);
+      return getAIMessage(messages, tools, attempt + 1);
+    }
+    if (isCorruptedToolCall && attempt < MAX_ATTEMPTS) {
+      io.emit('log', `⚠️ El modelo mandó una herramienta con el nombre corrupto, reintentando (intento ${attempt}/${MAX_ATTEMPTS})...`);
+      await sleep(1000);
       return getAIMessage(messages, tools, attempt + 1);
     }
     throw err;
@@ -1801,6 +2383,30 @@ async function transcribeAudio(base64Data, mimetype) {
       });
       return (result.text || '').trim();
     }
+    // DeepSeek no ofrece transcripción de audio propia — si está seleccionado
+    // como proveedor de chat, se usa Groq (gratis) o OpenAI (lo que tengas
+    // configurado) solo para esta parte, sin que tengas que hacer nada.
+    if (cfg.aiProvider === 'deepseek') {
+      if (cfg.groqApiKey) {
+        const groq = getGroqClient(cfg);
+        const result = await groq.audio.transcriptions.create({
+          file: fs.createReadStream(tmpPath),
+          model: 'whisper-large-v3-turbo',
+          language: 'es',
+        });
+        return (result.text || '').trim();
+      }
+      if (cfg.openaiApiKey) {
+        const openai = getOpenAIClient(cfg);
+        const result = await openai.audio.transcriptions.create({
+          file: fs.createReadStream(tmpPath),
+          model: 'whisper-1',
+          language: 'es',
+        });
+        return (result.text || '').trim();
+      }
+      throw new Error('DeepSeek no transcribe audio — agrega también tu clave de Groq u OpenAI en Configuración para poder recibir notas de voz.');
+    }
     const groq = getGroqClient(cfg);
     const result = await groq.audio.transcriptions.create({
       file: fs.createReadStream(tmpPath),
@@ -1816,21 +2422,53 @@ async function transcribeAudio(base64Data, mimetype) {
 function buildSystemPrompt(jid, overrideOrderData) {
   const cfg = readConfig();
   const products = readProducts();
+
+  // overrideOrderData se usa solo desde el simulador de pruebas — así puede
+  // reutilizar este mismo prompt sin tocar ningún cliente real.
+  const client = jid ? clients.get(jid) : null;
+  const orderData = overrideOrderData || client?.orderData || {};
+
+  // ---- Catálogo dinámico (para no pagar por el detalle completo de TODOS
+  // los productos en cada mensaje) ----
+  // Si ya sabemos de qué producto está hablando el cliente (guardado en la
+  // ficha), solo se manda el detalle completo de ESE — de los demás solo
+  // nombre y precio, mucho más barato. Si todavía no está claro, se manda el
+  // detalle completo de todos, como antes (para no perder nada mientras se
+  // aclara el interés).
+  const interestedProduct = orderData.producto ? findProductByQuery(orderData.producto) : null;
+
   const catalog = products
     .map((p) => {
       const priceLine =
         p.priceBefore && p.priceAfter
           ? `Precio: antes ${p.priceBefore}, HOY EN DESCUENTO a ${p.priceAfter}`
           : `Precio: ${p.priceAfter || p.priceBefore || 'consultar'}`;
+
+      const isFullDetail = !interestedProduct || interestedProduct.id === p.id;
+      if (!isFullDetail) {
+        // Resumen corto — solo para que la IA sepa que el producto existe y
+        // su precio, por si el cliente pregunta por otra cosa.
+        return `- ${p.name} | ${priceLine}`;
+      }
+
       const videoLine = p.video ? '  Tiene video disponible: SÍ' : '  Tiene video disponible: NO';
-      return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details}\n${videoLine}`;
+      const offersLine =
+        p.quantityOffers && p.quantityOffers.length > 0
+          ? `\n  OFERTA POR CANTIDAD ACTIVA: ${p.quantityOffers.map((o) => `${o.quantity} unidad${o.quantity > 1 ? 'es' : ''} por ${o.price}`).join(' / ')}`
+          : '';
+      return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details}\n${videoLine}${offersLine}`;
     })
     .join('\n');
 
-  // overrideOrderData se usa solo desde el simulador de pruebas — así puede
-  // reutilizar este mismo prompt sin tocar ningún cliente real.
-  const client = jid ? clients.get(jid) : null;
-  const orderData = overrideOrderData || client?.orderData || {};
+  const catalogNote = interestedProduct
+    ? `\n(Nota: arriba solo se muestra el detalle completo del producto de interés de este cliente — si pregunta por otro producto del catálogo, usa su nombre/precio de la lista, y si necesitas más detalle de otro, dilo con naturalidad en vez de inventar.)`
+    : '';
+
+  const anyProductHasOffers = products.some((p) => p.quantityOffers && p.quantityOffers.length > 0);
+  const offersInstructions = anyProductHasOffers
+    ? `Si el producto del que hablas TIENE "OFERTA POR CANTIDAD ACTIVA" en el catálogo, cuando informes el precio menciona también las opciones de más unidades, resaltando el ahorro (ej. "1 unidad: $79.900 🔥 Llévate 2 por $140.000 y ahorras $19.800"). Si no tiene oferta activa, informa solo el precio normal de 1 unidad, como siempre.`
+    : '';
+
   const fichaLines = [
     `Nombre: ${orderData.nombre || '(falta)'}`,
     `Teléfono: ${orderData.telefono || '(falta)'}`,
@@ -1841,6 +2479,7 @@ function buildSystemPrompt(jid, overrideOrderData) {
     orderData.barrio ? `Barrio: ${orderData.barrio}` : null,
     `Producto: ${orderData.producto || '(falta)'}`,
     `Cantidad: ${orderData.cantidad || '(falta)'}`,
+    client?.scheduledDelivery ? `Entrega programada para: ${client.scheduledDelivery.date}${client.scheduledDelivery.reminderSent ? ' (ya se le mandó el recordatorio de confirmación — si el cliente confirma que sí, cierra el pedido ahora con la frase obligatoria, ya tienes todos los datos)' : ''}` : null,
   ].filter(Boolean).join('\n');
 
   const confirmBeforeClosing = !!cfg.confirmOrderDataBeforeClosing;
@@ -1850,27 +2489,33 @@ Eres ${cfg.assistantName}, asistente virtual de ventas de ${cfg.companyName}, at
 
 ${cfg.baseInstructions}
 
-CATÁLOGO DE PRODUCTOS (usa SOLO esta información, nunca inventes precios ni beneficios):
-${catalog || '(Todavía no hay productos cargados)'}
-
 REGLA DE CATÁLOGO — LA MÁS IMPORTANTE DE TODAS, NUNCA LA ROMPAS:
-Los ÚNICOS productos que existen son los que aparecen en el catálogo de arriba. Si el cliente pregunta por algo que NO está en esa lista (otro producto, otro nombre, otra categoría), debes decir con claridad que no lo tienes disponible — NUNCA inventes un producto, nombre, precio, uso o característica que no esté escrito exactamente en el catálogo, así el cliente insista o describa algo que "suena parecido". Inventar un producto que no existe es el peor error que puedes cometer — genera confusión, pedidos que no se pueden cumplir, y hace quedar mal al negocio.
+Los ÚNICOS productos que existen son los que aparecen en el catálogo (más abajo en este mensaje). Si el cliente pregunta por algo que NO está en esa lista (otro producto, otro nombre, otra categoría), debes decir con claridad que no lo tienes disponible — NUNCA inventes un producto, nombre, precio, uso o característica que no esté escrito exactamente en el catálogo, así el cliente insista o describa algo que "suena parecido". Inventar un producto que no existe es el peor error que puedes cometer — genera confusión, pedidos que no se pueden cumplir, y hace quedar mal al negocio.
 
 Igual de importante cuando hay VARIOS productos reales en el catálogo: cada detalle (precio, forma de uso, beneficios, ingredientes) pertenece SOLO al producto exacto donde está escrito. Antes de responder, verifica de cuál producto está hablando el cliente en ESE momento de la conversación, y usa ÚNICAMENTE los detalles de ese producto — nunca tomes prestado un dato de otro producto del catálogo, aunque parezca similar.
 
 Si el cliente pregunta por un producto específico, responde con los detalles de ESE producto.
 Si pregunta en general, puedes mencionar brevemente los productos disponibles y preguntar cuál le interesa.
 
-Cuando el cliente pida ver fotos, imágenes o cómo se ve el producto, usa la función enviar_imagen_producto para enviarlas de verdad.
+Cuando el cliente pida ver fotos, imágenes o cómo se ve el producto, usa la función enviar_imagen_producto para enviarlas de verdad — manda también el parámetro "contexto" con lo que el cliente está preguntando en ese momento (ej. "precio", "modo de uso"), así se envía la foto correcta si el producto tiene varias configuradas para distintos momentos.
 Cuando el cliente pida ver un video, una demostración o cómo funciona, usa la función enviar_video_producto — pero solo si el catálogo dice que ese producto SÍ tiene video disponible; si no lo tiene, dilo con naturalidad en vez de llamar la función.
 Nunca digas frases como "ya te la envío" o "aquí tienes la foto/video" si no llamaste a la función correspondiente — el cliente no recibirá nada si solo lo dices en texto.
 
-FICHA DE DATOS DE ESTE CLIENTE (lo que ya tienes guardado, en este momento):
-${fichaLines}
-
 REGLA DE LA FICHA DE DATOS — MUY IMPORTANTE:
-Cada vez que el cliente te dé o corrija CUALQUIERA de estos datos (nombre, teléfono, dirección, departamento, ciudad, barrio, producto, cantidad, tipo de entrega), llama SIEMPRE a la función actualizar_datos_pedido con ese dato — aunque sea uno solo. Así nunca se te olvida ni preguntas dos veces algo que ya te dieron. Antes de pedir un dato, revisa la ficha de arriba — si ya lo tienes, NO lo vuelvas a pedir.
-Cuando el cliente muestre intención clara de comprar, pregunta EXACTAMENTE: "¿Cómo prefieres recibirlo? 🚚 Envío a domicilio o 🏢 recoges en oficina/punto de entrega?" — y guarda la respuesta con actualizar_datos_pedido.
+Cada vez que el cliente te dé o corrija CUALQUIERA de estos datos (nombre, teléfono, dirección, departamento, ciudad, barrio, producto, cantidad, tipo de entrega), llama SIEMPRE a la función actualizar_datos_pedido con ese dato — aunque sea uno solo. Así nunca se te olvida ni preguntas dos veces algo que ya te dieron. Antes de pedir un dato, revisa la ficha de datos de este cliente (más abajo en este mensaje) — si ya lo tienes, NO lo vuelvas a pedir.
+
+REGLA DE PRODUCTO POR CONTEXTO — MUY IMPORTANTE:
+Apenas quede claro de qué producto está hablando el cliente (así sea desde su primer mensaje, sin que lo repita después), guárdalo de una vez en la ficha con actualizar_datos_pedido — no esperes hasta el cierre del pedido para "acordarte". Si en la misma conversación el cliente cambia de tema a otro producto distinto, actualiza el campo de producto al nuevo.
+
+REGLA DE ENTREGA — MUY IMPORTANTE (esta regla ANULA cualquier instrucción de arriba que diga que preguntes "¿domicilio u oficina?" como paso aparte):
+NO preguntes "¿cómo prefieres recibirlo?" como una pregunta separada. Cuando el cliente muestre intención clara de comprar, pide los datos de una vez (nombre, dirección, ciudad y departamento, teléfono) — asume domicilio por defecto, sin preguntarlo.
+Solo pasa a "oficina" si el cliente lo dice explícitamente ("prefiero recogerlo", "mejor en oficina"), o si menciona el nombre de una transportadora (ej. "Interrápidísimo", "Servientrega", "Coordinadora") en cualquier parte de su mensaje — en ese caso, entiende que es recogida en oficina, guarda tipoEntrega como "oficina" con actualizar_datos_pedido, y no pidas dirección (no hace falta para oficina). Todo esto puede venir junto en un solo mensaje del cliente (ej. "Camilo Ramírez, Villavicencio Meta, oficina Interrápidísimo, 3215761197") — reconoce todos los datos de ese bloque de una sola vez, no le pidas que los repita por separado.
+
+REGLA DE CANTIDAD — MUY IMPORTANTE:
+Si el cliente no menciona la cantidad, asume 1 unidad por defecto — no se lo preguntes como paso aparte, a menos que el producto tenga ofertas por cantidad activas, en cuyo caso sí conviene ofrecerle el combo antes de cerrar. ${offersInstructions}
+
+REGLA DE ENTREGA PROGRAMADA — MUY IMPORTANTE:
+Si el cliente quiere comprar pero para una fecha futura (ej. "lo quiero pero para el 15", "hasta la otra semana"), pide y guarda TODOS los datos normales del pedido igual que siempre (nombre, dirección, producto, etc. con actualizar_datos_pedido), pero en vez de cerrar el pedido ahora, usa la función programar_entrega con la fecha — el sistema se encarga de escribirle solo unos días antes para confirmar. Revisa la ficha de datos: si ya tiene una entrega programada con el recordatorio ya enviado y el cliente está confirmando que sí, ahí sí cierra el pedido normal con la frase obligatoria, ya no hace falta pedir nada de nuevo.
 
 REGLA DE DIRECCIÓN COMPLETA — MUY IMPORTANTE:
 Una dirección solo cuenta como completa si identifica una casa/unidad ESPECÍFICA, no solo una zona o cruce general. Son válidas, por ejemplo:
@@ -1878,25 +2523,33 @@ Una dirección solo cuenta como completa si identifica una casa/unidad ESPECÍFI
 - Manzana y casa: "Manzana 15 Casa 27", "Mz 15 Cs 27"
 - Supermanzana y casa: "Supermanzana 3 Casa 12"
 NO son direcciones completas (pide que la complete, con un ejemplo del formato que necesitas): cruces sin número de casa ("Carrera 15 con 14"), o referencias sin número ("cerca al parque, casa amarilla"). Si la dirección que te dan ya trae un número que identifica la casa/unidad, acéptala tal cual la escribieron — no le exijas un formato exacto si ya es clara.
+Colombia tiene 32 departamentos — si el cliente solo dice la ciudad (ej. "Cumaral"), identifica tú el departamento correcto (ej. Meta) y guarda los dos por separado con actualizar_datos_pedido — nunca los mezcles en un solo campo. Ojo con estas formas cortas comunes — guarda siempre el nombre COMPLETO y exacto del departamento, no la forma corta que dice la gente: "Valle" → "Valle del Cauca" | "Bogotá" como departamento → "Cundinamarca" (Bogotá es la ciudad) | "San Andrés" → "San Andrés y Providencia" | "Norte" o "Norte Santander" → "Norte de Santander".
 
-${orderData.ciudad || orderData.departamento ? `NOTA: Colombia tiene 32 departamentos — si el cliente solo dice la ciudad (ej. "Cumaral"), identifica tú el departamento correcto (ej. Meta) y guarda los dos por separado con actualizar_datos_pedido — nunca los mezcles en un solo campo.` : ''}
+${confirmBeforeClosing ? `REGLA DE CONFIRMACIÓN — ACTIVADA (esta regla ANULA cualquier otra instrucción de arriba que diga que cierres apenas tengas los datos completos):
+Tener todos los datos completos NO es suficiente para cerrar el pedido todavía. Antes de cerrar, cuando ya tengas TODOS los datos completos, PRIMERO repítele al cliente un resumen breve de todos los datos y pregúntale si están correctos — este paso es obligatorio, nunca lo saltes. SOLO cuando el cliente confirme que sí (diga "sí", "correcto", "así está bien" o similar) en un mensaje POSTERIOR a ese resumen, ahí sí cierra el pedido con la frase obligatoria. Si el cliente corrige algo en la confirmación, guarda la corrección con actualizar_datos_pedido y vuelve a mandar el resumen para confirmar de nuevo.` : `Apenas la ficha de datos esté completa (según lo que necesite el tipo de entrega elegido), cierra el pedido de una vez, sin pedir una confirmación extra.`}
 
-${confirmBeforeClosing ? `REGLA DE CONFIRMACIÓN — ACTIVADA:
-Antes de cerrar el pedido, cuando ya tengas TODOS los datos completos, primero repítele al cliente un resumen breve de todos los datos y pregúntale si están correctos. SOLO cuando el cliente confirme que sí (diga "sí", "correcto", "así está bien" o similar), ahí sí cierra el pedido con la frase obligatoria. Si el cliente corrige algo en la confirmación, guarda la corrección con actualizar_datos_pedido y vuelve a confirmar.` : `Apenas la ficha de datos esté completa (según lo que necesite el tipo de entrega elegido), cierra el pedido de una vez, sin pedir una confirmación extra.`}
-
-REGLA DE CANCELACIÓN — MUY IMPORTANTE:
-Si el cliente dice que YA NO QUIERE el producto, se arrepintió de la compra, quiere anular o cancelar su PEDIDO — responde con empatía, sin insistir ni presionar, y SIEMPRE incluye en tu respuesta, exactamente así, la frase:
-❌ PEDIDO CANCELADO ❌
-Después de esa frase, agrega un resumen breve (producto del que se trataba, y el motivo si el cliente lo mencionó).
-Esta frase es SOLO para cuando el cliente cancela el pedido completo (ya no lo quiere). NUNCA la uses si el cliente solo está cambiando la forma de pago, preguntando por el precio, o teniendo dudas normales — eso NO es una cancelación.
+REGLA DE CANCELACIÓN — MUY IMPORTANTE (cancelación en dos pasos, no inmediata):
+Si el cliente dice que YA NO QUIERE el producto, se arrepintió, o quiere anular su pedido — NO lo canceles de una. Primero, responde con empatía, pregúntale amablemente el motivo, e intenta ayudarlo o convencerlo de que no cancele (sin presionar ni ser insistente — una sola vez, con calidez). En esa misma respuesta, incluye SIEMPRE, exactamente así, la frase:
+⚠️ INTENTO DE CANCELACIÓN ⚠️
+Si el cliente, DESPUÉS de tu intento de ayudarlo, sigue insistiendo en cancelar — ahí sí, respeta su decisión, dile que vas a remitir su caso al área encargada para que lo resuelvan (nunca digas "bot", "IA" ni "sistema"), e incluye SIEMPRE, exactamente así, la frase:
+🆘 NECESITA INTERVENCIÓN HUMANA 🆘
+Estas dos frases son señales internas para nuestro sistema — el cliente NUNCA las va a ver. NUNCA uses la frase de intento de cancelación si el cliente solo está cambiando la forma de pago, preguntando por el precio, o teniendo dudas normales — eso NO es una cancelación.
 
 REGLA DE INTERVENCIÓN HUMANA — MUY IMPORTANTE:
-Si el cliente pide explícitamente hablar con una persona/humano/asesor, está muy molesto o agresivo, tiene un reclamo complicado que no puedes resolver con la información que tienes, o cualquier situación donde el buen criterio diga que esto ya no lo debe manejar un bot — responde con calma y empatía, e incluye SIEMPRE, exactamente así, la frase:
+Si el cliente pide explícitamente hablar con una persona/humano/asesor, está muy molesto o agresivo, tiene un reclamo complicado que no puedes resolver con la información que tienes, o cualquier situación donde el buen criterio diga que esto ya no lo debe manejar un bot — responde con calma y empatía, dile que ya le avisaste al equipo y que en un momento le van a escribir (nunca digas la palabra "bot", "IA" ni "sistema" en esa frase, que suene natural, como "ya le comento a mi compañero para que te ayude con eso"), e incluye SIEMPRE, exactamente así, en cualquier parte de tu respuesta, la frase:
 🆘 NECESITA INTERVENCIÓN HUMANA 🆘
-Dile al cliente que ya le avisaste a alguien del equipo y que en un momento le van a escribir. No sigas insistiendo en vender ni resolver tú solo la situación después de usar esta frase.
+Esta frase es una señal interna para nuestro sistema — el cliente NUNCA la va a ver (el sistema la quita antes de enviar el mensaje), así que no te preocupes por que se vea rara ahí, solo asegúrate de incluirla siempre que aplique esta regla. No sigas insistiendo en vender ni resolver tú solo la situación después de usar esta frase.
 
 REGLA DE CONSULTA DE PEDIDOS — MUY IMPORTANTE:
-Si el cliente pregunta por el estado de un pedido que ya hizo (ej. "¿cómo va mi pedido?", "¿ya tiene guía?", "¿cuándo me llega?"), usa SIEMPRE la función consultar_estado_pedido antes de responder — nunca inventes ni asumas un estado. Cuéntale el resultado con naturalidad, no leas el texto tal cual salga de la función.
+Si el cliente pregunta por el estado de un pedido que ya hizo, por CUALQUIER motivo — "¿cómo va mi pedido?", "¿ya tiene guía?", "¿cuándo me llega?", "revisa de nuevo", "¿en qué estado está?", o cualquier variación — usa SIEMPRE la función consultar_estado_pedido antes de responder, cada vez que lo pregunte (aunque ya la hayas consultado antes en la misma conversación — el estado pudo cambiar). NUNCA inventes, asumas, ni repitas de memoria un estado o una fecha de entrega sin haber llamado la función en ESE mismo turno — ni siquiera si "suena lógico" o si el cliente insiste en que revises de nuevo. Cuéntale el resultado real con naturalidad, no leas el texto tal cual salga de la función.
+
+--- A PARTIR DE AQUÍ, INFORMACIÓN ESPECÍFICA DE ESTE CLIENTE ---
+
+CATÁLOGO DE PRODUCTOS (usa SOLO esta información, nunca inventes precios ni beneficios):
+${catalog || '(Todavía no hay productos cargados)'}${catalogNote}
+
+FICHA DE DATOS DE ESTE CLIENTE (lo que ya tienes guardado, en este momento):
+${fichaLines}
 `;
 }
 
@@ -1908,6 +2561,21 @@ function sleep(ms) {
 let sock = null;
 let botStatus = 'stopped'; // stopped | starting | qr | connected
 const MAX_HISTORY = 12;
+
+// Recorta el historial de una conversación sin partir a la mitad una pareja
+// de "la IA usó una herramienta" + "resultado de la herramienta" — si el
+// corte cayera justo ahí, sigue recortando un poco más hasta un punto
+// seguro. Antes, un corte a mitad de pareja causaba un error 400 ("messages
+// with role 'tool' must be a response to a preceding message with
+// 'tool_calls'") y el bot se quedaba mudo.
+function trimHistorySafely(history, maxTotalLength) {
+  if (history.length <= maxTotalLength) return;
+  let cutCount = history.length - maxTotalLength;
+  while (history[cutCount] && history[cutCount].role === 'tool') {
+    cutCount += 1;
+  }
+  history.splice(1, cutCount);
+}
 
 // ---- Conversaciones persistentes en disco ----
 // Antes vivían solo en RAM (se perdían al cerrar el bot). Ahora se guardan en
@@ -2017,6 +2685,7 @@ function ensureClientRecord(jid) {
       },
       notes: '', // notas internas del dueño — nunca las ve el cliente ni la IA
       followUpsSent: [], // IDs de los mensajes de seguimiento/remarketing ya enviados
+      scheduledDelivery: null, // { date: 'YYYY-MM-DD', reminderSent: false } — programación de entrega
     });
   } else {
     const rec = clients.get(jid);
@@ -2167,6 +2836,7 @@ const ORDER_STATUS_LABELS = {
   conversando: 'En conversación',
   interesado: 'Interesado',
   comprado: 'Compra confirmada',
+  confirmado: 'Confirmado', // solo de Pedidos — se activa al subir a Dropi/Skydropx
   guia_generada: 'Guía generada',
   en_camino: 'En camino',
   con_novedad: 'Con novedad',
@@ -2261,22 +2931,50 @@ function updateOrder(id, fields) {
 // vuelve a preguntar "¿ya quedó confirmado?" y la IA repite exactamente el
 // mismo resumen, no crea un segundo pedido igual.
 async function autoCreateOrderFromSummary(jid, client, summary) {
-  const alreadyExists = orders.some((o) => o.clientJid === jid && o.rawSummary === summary);
-  if (alreadyExists) return null;
-
   // La ficha de datos estructurada (si ya está llena) es más confiable que
   // "adivinar" leyendo el texto final — se usa de primera, y el texto
   // extraído queda solo como respaldo si algún campo no se llegó a guardar.
   const od = client?.orderData || {};
   const phone = od.telefono || client?.phone || jid.split('@')[0];
 
-  // Aviso de pedido duplicado: si este mismo teléfono ya tiene otro pedido
-  // reciente (últimas 24h) sin resolver todavía, lo marcamos para que se
-  // note en el panel — no bloquea la creación, solo avisa.
-  const UNRESOLVED = ['pendiente', 'guia_generada', 'en_camino'];
+  // Si este mismo cliente (por su jid real, que no cambia aunque corrija
+  // datos) ya tiene un pedido "pendiente" creado hace muy poco, lo tratamos
+  // como una corrección de ese mismo pedido (ej. corrigió el teléfono o la
+  // dirección después de cerrarlo) — se ACTUALIZA en vez de crear uno
+  // nuevo. Si el pendiente existente es de hace rato, sí es una compra
+  // distinta y se crea uno nuevo de verdad.
+  const CORRECTION_WINDOW_MS = 15 * 60 * 1000;
+  const recentPendingOrder = orders.find(
+    (o) => o.clientJid === jid && o.status === 'pendiente' && Date.now() - o.createdAt < CORRECTION_WINDOW_MS
+  );
+
+  if (recentPendingOrder) {
+    const updated = updateOrder(recentPendingOrder.id, {
+      clientName: od.nombre || client?.name || extractNameFromOrderText(summary) || recentPendingOrder.clientName,
+      clientPhone: phone,
+      product: od.producto || extractProductFromOrderText(summary) || recentPendingOrder.product,
+      quantity: od.cantidad || recentPendingOrder.quantity,
+      price: extractPriceFromOrderText(summary) || recentPendingOrder.price,
+      address: od.direccion || extractAddressFromOrderText(summary) || recentPendingOrder.address,
+      department: od.departamento || recentPendingOrder.department,
+      city: od.ciudad || extractCityFromOrderText(summary) || recentPendingOrder.city,
+      neighborhood: od.barrio || recentPendingOrder.neighborhood,
+      deliveryType: od.tipoEntrega || recentPendingOrder.deliveryType,
+      rawSummary: summary,
+    });
+    io.emit('log', `✏️ Pedido ${recentPendingOrder.id} actualizado (el cliente corrigió un dato), no se creó uno nuevo`);
+    return updated;
+  }
+
+  // Aviso de pedido duplicado: si este mismo cliente (por jid o por
+  // teléfono) ya tiene OTRO pedido reciente (últimas 24h) sin resolver
+  // todavía, lo marcamos para que se note en el panel — no bloquea la
+  // creación, solo avisa. Se compara por jid primero (no cambia nunca) y por
+  // teléfono como respaldo.
+  const UNRESOLVED = ['pendiente', 'confirmado', 'guia_generada', 'en_camino'];
   const recentDuplicate = orders.find(
     (o) =>
-      o.clientPhone === phone &&
+      (o.clientJid === jid || o.clientPhone === phone) &&
       UNRESOLVED.includes(o.status) &&
       Date.now() - o.createdAt < 24 * 60 * 60 * 1000
   );
@@ -2300,7 +2998,7 @@ async function autoCreateOrderFromSummary(jid, client, summary) {
   });
 
   if (recentDuplicate) {
-    io.emit('log', `⚠️ Posible pedido duplicado: ${order.id} y ${recentDuplicate.id} son del mismo teléfono, en menos de 24h`);
+    io.emit('log', `⚠️ Posible pedido duplicado: ${order.id} y ${recentDuplicate.id} son del mismo cliente, en menos de 24h`);
   }
 
   // Avisar al cliente el número de orden, para que lo tenga guardado y pueda
@@ -2353,6 +3051,9 @@ async function sendAndTrack(jid, content, options) {
 // los mensajes del MISMO número se procesan uno por uno, en orden. Distintos
 // clientes sí se siguen atendiendo en paralelo entre sí.
 const userQueues = new Map();
+// Buffer de mensajes por cliente, para el "debounce" — junta varios mensajes
+// seguidos en una sola respuesta en vez de contestar a cada uno por separado.
+const pendingMessageBuffers = new Map();
 
 function enqueueForUser(userId, task) {
   const previous = userQueues.get(userId) || Promise.resolve();
@@ -2529,160 +3230,17 @@ async function startBot() {
         return;
       }
 
-      if (!conversations.has(userId)) {
-        conversations.set(userId, [{ role: 'system', content: buildSystemPrompt(userId) }]);
-      }
-      const history = conversations.get(userId);
-      history[0] = { role: 'system', content: buildSystemPrompt(userId) }; // refresca por si cambiaron productos/config/ficha de datos
-      history.push({ role: 'user', content: messageText });
-
-      if (history.length > MAX_HISTORY + 1) {
-        history.splice(1, history.length - (MAX_HISTORY + 1));
-      }
-      saveConversations();
-
-      try {
-        await sock.sendPresenceUpdate('composing', userId);
-      } catch (e) {
-        // sin problema si no se puede mostrar "escribiendo..."
-      }
-
       if (isNewUser) {
         await sendAndTrack(userId, { text: cfg.welcomeMessage });
       }
 
-      await sleep((cfg.responseDelaySeconds ?? 5) * 1000);
-
-      // ---- Primera llamada a la IA, con las herramientas de imagen y video disponibles ----
-      let aiMessage = await getAIMessage(history, [productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool]);
-
-      if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-        // El modelo decidió enviar imagen o video: lo hacemos de verdad.
-        history.push({
-          role: 'assistant',
-          content: aiMessage.content || null,
-          tool_calls: aiMessage.tool_calls,
-        });
-
-        for (const toolCall of aiMessage.tool_calls) {
-          let args = {};
-          try {
-            args = JSON.parse(toolCall.function.arguments || '{}');
-          } catch (e) {}
-
-          let resultText = 'No se encontró el producto solicitado.';
-          if (toolCall.function.name === 'enviar_imagen_producto') {
-            const product = findProductByQuery(args.producto);
-            const sent = await sendProductImages(userId, product);
-            resultText = sent
-              ? `Imagen(es) de "${product.name}" enviadas correctamente.`
-              : 'No hay imágenes disponibles para ese producto.';
-          } else if (toolCall.function.name === 'enviar_video_producto') {
-            const product = findProductByQuery(args.producto);
-            const sent = await sendProductVideo(userId, product);
-            resultText = sent
-              ? `Video de "${product.name}" enviado correctamente.`
-              : 'Ese producto no tiene un video cargado.';
-          } else if (toolCall.function.name === 'actualizar_datos_pedido') {
-            resultText = handleUpdateOrderData(userId, args);
-          } else if (toolCall.function.name === 'consultar_estado_pedido') {
-            resultText = handleCheckOrderStatus(userId, args);
-          }
-
-          history.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: resultText,
-          });
-        }
-
-        // Segunda llamada para que la IA redacte el mensaje final ya sabiendo
-        // qué se envió de verdad (o si no había disponible).
-        aiMessage = await getAIMessage(history);
-      }
-
-      const reply = (aiMessage.content || '').trim() || 'Listo 😊';
-      history.push({ role: 'assistant', content: reply });
-      saveConversations();
-      appendChatLog(userId, { from: 'bot', text: reply, type: 'text', timestamp: Date.now() });
-
-      // ---- Responder con audio (voz clonada) según el modo configurado ----
-      // voiceMode: 'off' (siempre texto), 'voice' (siempre audio),
-      // 'mirror' (responde en el mismo formato en que llegó el mensaje).
-      // Excepción: las confirmaciones de venta/cancelación SIEMPRE van en
-      // texto, sin importar el modo — traen datos importantes (dirección,
-      // teléfono, precio) que el cliente necesita poder leer y guardar, no
-      // solo escuchar una vez.
-      const isOrderConfirmation =
-        reply.includes('ORDEN DE COMPRA REGISTRADA') || reply.includes('PEDIDO CANCELADO');
-      const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
-      const minimaxReady = cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
-      const shouldReplyWithVoice =
-        !isOrderConfirmation &&
-        minimaxReady &&
-        (voiceMode === 'voice' || (voiceMode === 'mirror' && isVoiceMessage));
-
-      if (shouldReplyWithVoice) {
-        try {
-          await sendVoiceReply(userId, reply);
-        } catch (err) {
-          console.error('Error generando audio con MiniMax, se responde en texto:', err);
-          io.emit('log', `⚠️ Falló la voz (MiniMax), respondí en texto: ${err.message}`);
-          await sendAndTrack(userId, { text: reply });
-        }
-      } else {
-        await sendAndTrack(userId, { text: reply });
-      }
-
-      // ---- Si esta respuesta cerró una venta, avisar al número del dueño ----
-      if (reply.includes('ORDEN DE COMPRA REGISTRADA') && cfg.notificationPhoneNumber) {
-        try {
-          await notifyOwnerOfSale(cfg, userId, reply);
-          io.emit('log', `🛎️ Venta notificada a ${cfg.notificationPhoneNumber}`);
-        } catch (err) {
-          console.error('Error notificando la venta:', err);
-          io.emit('log', `⚠️ No se pudo notificar la venta: ${err.message}`);
-        }
-      }
-      if (reply.includes('ORDEN DE COMPRA REGISTRADA')) {
-        const name = extractNameFromOrderText(reply);
-        updateClientStatus(userId, 'comprado', {
-          lastOrderSummary: reply,
-          ...(name ? { name } : {}),
-        });
-        await autoCreateOrderFromSummary(userId, clients.get(userId), reply);
-      }
-
-      // ---- Si el cliente canceló el pedido, avisar también ----
-      if (reply.includes('PEDIDO CANCELADO') && cfg.notificationPhoneNumber) {
-        try {
-          await notifyOwnerOfCancellation(cfg, userId, reply);
-          io.emit('log', `❌ Cancelación notificada a ${cfg.notificationPhoneNumber}`);
-        } catch (err) {
-          console.error('Error notificando la cancelación:', err);
-          io.emit('log', `⚠️ No se pudo notificar la cancelación: ${err.message}`);
-        }
-      }
-      if (reply.includes('PEDIDO CANCELADO')) {
-        updateClientStatus(userId, 'cancelado', {});
-      }
-
-      // ---- Si la IA detectó que hace falta una persona real, avisar y pausar ----
-      if (reply.includes('NECESITA INTERVENCIÓN HUMANA')) {
-        if (cfg.notificationPhoneNumber) {
-          try {
-            await notifyOwnerOfIntervention(cfg, userId, reply);
-            io.emit('log', `🆘 Intervención humana notificada a ${cfg.notificationPhoneNumber}`);
-          } catch (err) {
-            console.error('Error notificando la intervención:', err);
-            io.emit('log', `⚠️ No se pudo notificar la intervención: ${err.message}`);
-          }
-        }
-        const minutes = Number(cfg.pauseDurationMinutes) || DEFAULT_PAUSE_MINUTES;
-        pauseChat(userId, minutes);
-        io.emit('log', `⏸️ ${userId} pausado — necesita intervención humana`);
-      }
-
+      // ---- Agrupar mensajes seguidos (debounce) ----
+      // Si el cliente manda varios mensajes/audios muy seguidos, no
+      // respondemos a cada uno por separado — esperamos un rato corto por si
+      // sigue escribiendo, y respondemos UNA sola vez a todo junto. Así no se
+      // "come" datos que llegaron en un mensaje aparte, ni contesta atrasado
+      // mensaje por mensaje.
+      scheduleDebouncedReply(userId, messageText, isVoiceMessage);
       io.emit('log', `💬 ${userId}: ${messageText}`);
     } catch (err) {
       console.error('Error procesando mensaje:', err);
@@ -2696,7 +3254,140 @@ async function startBot() {
       } catch (e) {}
     }
   }
+
+  const DEBOUNCE_MS = 7000; // segundos de espera tras el último mensaje antes de responder
+
+  function scheduleDebouncedReply(userId, text, isVoice) {
+    let buf = pendingMessageBuffers.get(userId);
+    if (!buf) {
+      buf = { texts: [], anyVoice: false, timer: null };
+      pendingMessageBuffers.set(userId, buf);
+    }
+    buf.texts.push(text);
+    if (isVoice) buf.anyVoice = true;
+    if (buf.timer) clearTimeout(buf.timer);
+    buf.timer = setTimeout(() => {
+      pendingMessageBuffers.delete(userId);
+      enqueueForUser(userId, () => generateReplyForUser(userId, buf.texts, buf.anyVoice));
+    }, DEBOUNCE_MS);
+  }
+
+// Si la IA falla por cualquier motivo (el error de la pareja de
+// herramientas, un corte de conexión, lo que sea), en vez de rendirse de una
+// con el mensaje de disculpa, se reintenta varias veces — la segunda vez con
+// la conversación "limpia" (se descarta el historial viejo que pudo causar
+// el problema, dejando solo el prompt del sistema + el mensaje actual), y
+// las siguientes con una espera corta. Solo si los 4 intentos fallan, se
+// deja que el error suba y se use el mensaje de disculpa como último recurso.
+async function getReplyWithSelfHealing(userId, history, messageText) {
+  const MAX_TOTAL_ATTEMPTS = 4;
+  let lastError = null;
+  for (let attempt = 1; attempt <= MAX_TOTAL_ATTEMPTS; attempt++) {
+    try {
+      if (attempt === 2) {
+        const cleanHistory = [history[0], { role: 'user', content: messageText }];
+        history.length = 0;
+        history.push(...cleanHistory);
+        saveConversations();
+      } else if (attempt > 2) {
+        await sleep(1500);
+      }
+      return await runToolLoop(userId, history);
+    } catch (err) {
+      lastError = err;
+      console.error(`Intento ${attempt}/${MAX_TOTAL_ATTEMPTS} de responder falló:`, err.message);
+      io.emit('log', `⚠️ Intento ${attempt}/${MAX_TOTAL_ATTEMPTS} de responder falló, reintentando...`);
+    }
+  }
+  throw lastError;
 }
+
+  async function generateReplyForUser(userId, texts, isVoiceMessage) {
+    try {
+      const cfg = readConfig();
+      // Si llegaron varios mensajes seguidos, se juntan en un solo turno —
+      // así la IA los ve todos de una, en vez de solo el último.
+      const messageText = texts.join('\n');
+
+      if (!conversations.has(userId)) {
+        conversations.set(userId, [{ role: 'system', content: buildSystemPrompt(userId) }]);
+      }
+      const history = conversations.get(userId);
+      history[0] = { role: 'system', content: buildSystemPrompt(userId) }; // refresca por si cambiaron productos/config/ficha de datos
+      history.push({ role: 'user', content: messageText });
+
+      if (history.length > MAX_HISTORY + 1) {
+        trimHistorySafely(history, MAX_HISTORY + 1);
+      }
+      saveConversations();
+
+      try {
+        await sock.sendPresenceUpdate('composing', userId);
+      } catch (e) {
+        // sin problema si no se puede mostrar "escribiendo..."
+      }
+
+      await sleep((cfg.responseDelaySeconds ?? 5) * 1000);
+
+      // ---- La IA responde, usando herramientas las veces que necesite, con reintentos si falla ----
+      const aiMessage = await getReplyWithSelfHealing(userId, history, messageText);
+
+      const reply = (aiMessage.content || '').trim() || 'Listo 😊';
+      history.push({ role: 'assistant', content: reply });
+      saveConversations();
+
+      // El cliente nunca debe ver las frases "señal interna" (como la de
+      // intervención humana) — se limpian del texto que de verdad se manda.
+      const clientReply = stripInternalMarkers(reply);
+
+      // ---- Responder con audio (voz clonada) según el modo configurado ----
+      // voiceMode: 'off' (siempre texto), 'voice' (siempre audio),
+      // 'mirror' (responde en el mismo formato en que llegó el mensaje).
+      // Excepción: las confirmaciones de venta/cancelación SIEMPRE van en
+      // texto, sin importar el modo — traen datos importantes (dirección,
+      // teléfono, precio) que el cliente necesita poder leer y guardar, no
+      // solo escuchar una vez.
+      const isOrderConfirmation = reply.includes('ORDEN DE COMPRA REGISTRADA');
+      const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
+      const minimaxReady = cfg.minimaxApiKey && cfg.minimaxGroupId && cfg.minimaxVoiceId;
+      const shouldReplyWithVoice =
+        !isOrderConfirmation &&
+        minimaxReady &&
+        (voiceMode === 'voice' || (voiceMode === 'mirror' && isVoiceMessage));
+
+      if (shouldReplyWithVoice) {
+        try {
+          const oggFilename = await sendVoiceReply(userId, clientReply);
+          appendChatLog(userId, { from: 'bot', text: clientReply, type: 'voice', mediaUrl: `/media/${oggFilename}`, timestamp: Date.now() });
+        } catch (err) {
+          console.error('Error generando audio con MiniMax, se responde en texto:', err);
+          io.emit('log', `⚠️ Falló la voz (MiniMax), respondí en texto: ${err.message}`);
+          await sendAndTrack(userId, { text: clientReply });
+          appendChatLog(userId, { from: 'bot', text: clientReply, type: 'text', timestamp: Date.now() });
+        }
+      } else {
+        await sendAndTrack(userId, { text: clientReply });
+        appendChatLog(userId, { from: 'bot', text: clientReply, type: 'text', timestamp: Date.now() });
+      }
+
+      await handlePostReplyMarkers(userId, reply, cfg);
+      if (reply.includes('ORDEN DE COMPRA REGISTRADA')) io.emit('log', `🛎️ Venta registrada`);
+      if (reply.includes('INTENTO DE CANCELACIÓN')) io.emit('log', `⚠️ ${userId} intentó cancelar — la IA está tratando de retenerlo`);
+      if (reply.includes('NECESITA INTERVENCIÓN HUMANA')) io.emit('log', `🆘 ${userId} pausado — necesita intervención humana`);
+    } catch (err) {
+      console.error('Error generando respuesta:', err);
+      io.emit('log', `❌ Error: ${err.message}`);
+      const isRateLimit = err?.status === 429;
+      const fallbackMsg = isRateLimit
+        ? 'Estamos con muchos mensajes en este momento 🙏. Dame un minuto y te respondo enseguida.'
+        : 'Disculpa, tuve un problema técnico 🙏. ¿Puedes repetir tu mensaje?';
+      try {
+        await sendAndTrack(userId, { text: fallbackMsg });
+      } catch (e) {}
+    }
+  }
+}
+
 
 app.post('/api/start', (req, res) => {
   startBot().catch((err) => {
