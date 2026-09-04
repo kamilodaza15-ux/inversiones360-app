@@ -85,7 +85,7 @@
 
       <section id="tab-config" class="tab-content">
         <div class="main-scroll"><div class="inner-narrow">
-          <div class="card">
+          <div class="card collapsible-card">
             <h2>Empresa y asistente</h2>
             <label>Nombre de la asistente</label>
             <input id="cfg-assistantName" type="text" />
@@ -124,11 +124,27 @@
             </select>
             <p class="hint small">Necesita que la API de Dropi/Skydropx esté configurada y conectada — mientras tanto, aunque lo actives, va a avisar que falta la conexión, sin romper nada.</p>
 
+            <label>Correo de tu cuenta de Dropi</label>
+            <input id="cfg-dropiEmail" type="text" placeholder="tucorreo@ejemplo.com" />
+            <label>Contraseña de tu cuenta de Dropi</label>
+            <input id="cfg-dropiPassword" type="password" placeholder="••••••••" />
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+              <input id="cfg-dropiUseTestEnv" type="checkbox" style="width:auto" />
+              Usar ambiente de pruebas de Dropi (para probar sin arriesgar pedidos reales)
+            </label>
+            <p class="hint small">Son las mismas credenciales con las que entras a dropi.co. Se guardan solo en tu computador, nunca se comparten.</p>
+
+            <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
+            <span id="configSaved" class="saved-msg"></span>
+          </div>
+
+          <div class="card collapsible-card">
             <h2>Proveedor de IA</h2>
             <label>Proveedor</label>
             <select id="cfg-aiProvider">
               <option value="groq">Groq (gratis / rápido)</option>
               <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek (barato, buena calidad)</option>
             </select>
 
             <label>Groq API Key</label>
@@ -161,11 +177,22 @@
             </select>
             <input id="cfg-openaiModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
 
-            <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
-            <span id="configSaved" class="saved-msg"></span>
+            <label>DeepSeek API Key</label>
+            <input id="cfg-deepseekApiKey" type="text" placeholder="sk-..." />
+            <p class="hint small">¿No tienes clave de DeepSeek? <a href="https://platform.deepseek.com" target="_blank" rel="noopener">Consíguela aquí</a> — mucho más barata que OpenAI, buena calidad. Ten en cuenta que no transcribe audio, así que si la eliges, deja también tu clave de Groq u OpenAI arriba para las notas de voz.</p>
+            <label>Modelo de DeepSeek</label>
+            <select id="cfg-deepseekModel">
+              <option value="deepseek-v4-flash">deepseek-v4-flash (recomendado: rápido y muy barato)</option>
+              <option value="deepseek-v4-pro">deepseek-v4-pro (más potente, un poco más caro)</option>
+              <option value="__custom__">Otro (escribir manualmente)...</option>
+            </select>
+            <input id="cfg-deepseekModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
+
+            <button id="saveAiProviderBtn" class="save-btn">Guardar configuración</button>
+            <span id="aiProviderSaved" class="saved-msg"></span>
           </div>
 
-          <div class="card">
+          <div class="card collapsible-card">
             <h2>Secuencia de seguimiento (remarketing)</h2>
             <p class="hint small">Si un cliente pregunta por un producto y se queda callado sin comprar, el bot le puede escribir solo, unas horas después, para recordarle la oferta.</p>
             <p class="hint small"><b>(Recomendado: máximo 2-3 mensajes, para evitar riesgo de baneo de WhatsApp)</b></p>
@@ -195,7 +222,7 @@
             <span id="followUpSaved" class="saved-msg"></span>
           </div>
 
-          <div class="card">
+          <div class="card collapsible-card">
             <h2>Voz del bot (clonación con MiniMax)</h2>
             <p class="hint small">
               A diferencia de Groq, <b>MiniMax no es gratis</b> — cobra por clonar la voz y por cada audio que genera después.
@@ -233,7 +260,7 @@
             <span id="voiceConfigSaved" class="saved-msg"></span>
           </div>
 
-          <div class="card">
+          <div class="card collapsible-card">
             <h2>Respaldo (mover productos y configuración a otra PC)</h2>
             <p class="hint small">Útil si usas la app en más de un equipo (ej. portátil y computador de mesa) sin tenerlos prendidos al mismo tiempo. No incluye la licencia (queda atada a cada máquina) ni la conexión de WhatsApp (escanea el QR de nuevo en cada equipo).</p>
 
@@ -246,7 +273,7 @@
             <p id="importBackupStatus" class="hint small" style="margin-top:8px"></p>
           </div>
 
-          <div class="card">
+          <div class="card collapsible-card">
             <h2>Actualizaciones</h2>
             <p class="hint">Versión instalada: <b id="currentVersionLabel">...</b></p>
             <button id="checkUpdateBtn" class="save-btn">🔄 Buscar actualizaciones</button>
@@ -279,8 +306,17 @@
               <input id="p-keywords" type="text" placeholder="magnesio, calambres, dormir" />
 
               <label>ID de producto en Dropi (opcional)</label>
-              <input id="p-dropiProductId" type="text" placeholder="Ej. 123456" />
-              <p class="hint small">Por ahora este campo solo se guarda — cuando conectemos la API de Dropi, va a poder traer el nombre/fotos/descripción automático desde aquí.</p>
+              <div style="display:flex;gap:8px">
+                <input id="p-dropiProductId" type="text" placeholder="Ej. 123456" style="flex:1" />
+                <button type="button" id="searchDropiBtn" class="cancel-btn" style="margin-top:0;white-space:nowrap">🔍 Buscar en Dropi</button>
+              </div>
+              <p class="hint small">Busca por nombre en tu catálogo de Dropi y haz clic en el resultado correcto para llenar el ID automático.</p>
+              <div id="dropiSearchResults" style="display:none;margin-top:8px;max-height:220px;overflow-y:auto;border:1px solid var(--border-color);border-radius:10px;padding:8px"></div>
+
+              <label>Ofertas por cantidad (opcional — ej. "lleva 2 y ahorra")</label>
+              <div id="quantityOffersList"></div>
+              <button type="button" id="addQuantityOfferBtn" class="cancel-btn" style="width:100%">➕ Agregar oferta por cantidad</button>
+              <p class="hint small">Si no agregas ninguna, el bot solo informa el precio normal de 1 unidad, como siempre.</p>
 
               <label>Detalle completo (para que la IA venda bien este producto)</label>
               <textarea id="p-details" rows="6"></textarea>
@@ -363,6 +399,12 @@
             </div>
             <div class="right-panel-scroll">
               <div class="rp-section">
+                <label style="margin-top:0">Ficha de datos del pedido</label>
+                <p class="hint small" style="margin-top:0">Si la IA entendió algo mal, corrígelo aquí directo.</p>
+                <div id="rpOrderData" style="font-size:0.82rem"></div>
+                <button id="rpSaveOrderDataBtn" class="cancel-btn" style="width:100%">💾 Guardar ficha</button>
+              </div>
+              <div class="rp-section">
                 <label style="margin-top:0">Nota interna (solo tú la ves, nunca la IA ni el cliente)</label>
                 <textarea id="rpNotes" rows="3" placeholder="Ej. Pidió que lo llamemos después de las 6pm"></textarea>
                 <button id="rpSaveNotesBtn" class="cancel-btn" style="width:100%">💾 Guardar nota</button>
@@ -396,12 +438,21 @@
               </div>
 
               <div class="rp-section">
+                <label style="margin-top:0">📅 Programar entrega</label>
+                <input id="rpScheduleDate" type="date" />
+                <button id="rpScheduleDeliveryBtn" class="cancel-btn" style="width:100%">Programar entrega</button>
+                <p id="rpScheduleStatus" class="hint small" style="margin-top:6px"></p>
+              </div>
+
+              <div class="rp-section">
                 <p class="hint small" style="margin-top:0">Cuando la IA cierra una venta, el pedido aparece solo en la pestaña Pedidos — no hace falta ningún clic aquí.</p>
                 <button id="rpManualOrderBtn" class="cancel-btn" style="width:100%;margin-top:0">📝 Cerrar pedido (manual)</button>
+                <button id="rpGuideTemplateBtn" class="cancel-btn" style="width:100%">📦 Enviar mensaje de guía generada</button>
               </div>
 
               <div class="rp-section">
                 <a id="rpWhatsappLink" href="#" target="_blank" class="cancel-btn" style="width:100%;display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin-top:0">💬 Abrir en WhatsApp</a>
+                <button id="rpExportChatBtn" class="cancel-btn" style="width:100%">📋 Exportar chat</button>
                 <button id="rpDeleteChatBtn" class="cancel-btn" style="width:100%;color:#dc2626">🗑️ Borrar chat</button>
               </div>
             </div>
@@ -416,12 +467,15 @@
             <h2 style="margin:0">Cerrar pedido (manual)</h2>
             <button id="closeManualOrderBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">✕</button>
           </div>
+          <p id="moDuplicateWarning" class="hint small" style="display:none;color:#dc2626;background:rgba(220,38,38,0.1);padding:10px;border-radius:8px"></p>
           <label>Nombre del cliente</label>
           <input id="mo-clientName" type="text" />
           <label>Teléfono</label>
           <input id="mo-clientPhone" type="text" />
           <label>Producto</label>
-          <input id="mo-product" type="text" />
+          <select id="mo-product">
+            <option value="">Elegir producto...</option>
+          </select>
           <div class="price-row">
             <div><label>Cantidad</label><input id="mo-quantity" type="number" min="1" value="1" /></div>
             <div><label>Precio</label><input id="mo-price" type="text" placeholder="$99.900" /></div>
@@ -434,12 +488,56 @@
           <label>Dirección</label>
           <input id="mo-address" type="text" />
           <div class="price-row">
-            <div><label>Departamento</label><input id="mo-department" type="text" /></div>
-            <div><label>Ciudad</label><input id="mo-city" type="text" /></div>
+            <div>
+              <label>Departamento</label>
+              <select id="mo-department"><option value="">Elegir...</option></select>
+            </div>
+            <div>
+              <label>Ciudad</label>
+              <select id="mo-city"><option value="">Elegir departamento primero</option></select>
+            </div>
           </div>
           <label>Barrio (opcional)</label>
           <input id="mo-neighborhood" type="text" />
           <button id="saveManualOrderBtn" class="save-btn">Guardar pedido</button>
+        </div>
+      </div>
+
+      <div id="guideTemplateOverlay" class="modal-overlay" style="display:none">
+        <div class="modal-box">
+          <div style="display:flex;align-items:center">
+            <h2 style="margin:0">📦 Mensaje de guía generada</h2>
+            <button id="closeGuideTemplateBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">✕</button>
+          </div>
+          <p id="guideTemplateNoOrder" class="hint small" style="display:none;color:#dc2626">Este cliente no tiene ningún pedido registrado todavía — usa "Cerrar pedido (manual)" primero.</p>
+          <div id="guideTemplateFields" style="display:none">
+            <label>Número de guía</label>
+            <input id="gt-guideNumber" type="text" placeholder="Ej. 014117806991" />
+            <label>Transportadora</label>
+            <input id="gt-transportadora" type="text" placeholder="Ej. Interrápidísimo" />
+            <label>Mensaje (editable antes de enviar)</label>
+            <textarea id="gt-message" rows="8"></textarea>
+            <button id="regenerateGuideTemplateBtn" class="cancel-btn" style="width:100%">🔄 Regenerar texto con estos datos</button>
+            <button id="sendGuideTemplateBtn" class="save-btn">Enviar al cliente</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="mediaBankOverlay" class="modal-overlay" style="display:none">
+        <div class="modal-box">
+          <div style="display:flex;align-items:center">
+            <h2 id="mediaBankTitle" style="margin:0">🖼️ Banco de medios</h2>
+            <button id="closeMediaBankBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">✕</button>
+          </div>
+          <p class="hint small" style="margin-top:0">Cada foto puede tener su propia regla de cuándo enviarla (ej. "cuando pregunte el precio"). Si la dejas vacía, queda como foto general — se manda cuando no hay ninguna otra más específica que aplique.</p>
+          <div id="mediaBankList"></div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-color)">
+            <label>Agregar otra imagen</label>
+            <input id="mb-newImage" type="file" accept="image/*" />
+            <label>¿Cuándo debe enviarse? (opcional — vacío = general)</label>
+            <input id="mb-newRule" type="text" placeholder="Ej. cuando pregunte el precio" />
+            <button id="mb-addImageBtn" class="save-btn">➕ Agregar imagen</button>
+          </div>
         </div>
       </div>
 
@@ -526,7 +624,9 @@
           <label>Teléfono</label>
           <input id="od-clientPhone" type="text" />
           <label>Producto</label>
-          <input id="od-product" type="text" />
+          <select id="od-product">
+            <option value="">Elegir producto...</option>
+          </select>
           <div class="price-row">
             <div><label>Cantidad</label><input id="od-quantity" type="number" min="1" /></div>
             <div><label>Precio</label><input id="od-price" type="text" /></div>
@@ -539,13 +639,21 @@
           <label>Dirección</label>
           <input id="od-address" type="text" />
           <div class="price-row">
-            <div><label>Departamento</label><input id="od-department" type="text" /></div>
-            <div><label>Ciudad</label><input id="od-city" type="text" /></div>
+            <div>
+              <label>Departamento</label>
+              <select id="od-department"><option value="">Elegir...</option></select>
+            </div>
+            <div>
+              <label>Ciudad</label>
+              <select id="od-city"><option value="">Elegir departamento primero</option></select>
+            </div>
           </div>
           <label>Barrio (opcional)</label>
           <input id="od-neighborhood" type="text" />
           <label>Transportadora</label>
-          <input id="od-transportadora" type="text" />
+          <input id="od-transportadora" type="text" placeholder="Se llena sola al generar la guía en Dropi" />
+          <label>Número de guía</label>
+          <input id="od-guideNumber" type="text" placeholder="Se llena sola al generar la guía en Dropi" />
           <label>Estado</label>
           <select id="od-status"></select>
 
@@ -555,6 +663,8 @@
 
           <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color)">
             <button id="uploadDropiBtn" class="save-btn" style="margin-top:0">🚀 Subir a Dropi</button>
+            <button id="generateGuideDropiBtn" class="cancel-btn">📦 Generar guía en Dropi</button>
+            <button id="refreshStatusDropiBtn" class="cancel-btn">🔄 Actualizar estado (Dropi)</button>
             <button id="uploadSkydropxBtn" class="cancel-btn">🚀 Subir a Skydropx</button>
             <p id="uploadStatus" class="hint small" style="margin-top:8px"></p>
           </div>
@@ -603,22 +713,22 @@
 
   <div id="toastContainer"></div>
 
-  <div id="onboardingOverlay" class="modal-overlay" style="display:none">
-    <div class="modal-box" style="max-width:440px;text-align:center">
+  <div id="onboardingOverlay" class="onboarding-card" style="display:none">
+    <div style="max-width:340px;text-align:center">
       <div id="onboardingStep1">
         <h2>👋 ¡Bienvenido a Inversiones 360 CHAT!</h2>
         <p class="hint">Vamos a dejar todo listo en 3 pasos rápidos: tu clave de IA, conectar WhatsApp, y tu primer producto.</p>
         <button class="start-btn" id="onboardingStartBtn">Empezar</button>
       </div>
       <div id="onboardingStep2" style="display:none">
-        <h2>1️⃣ Clave de IA (Groq)</h2>
-        <p class="hint">Necesitas una clave gratis de Groq para que la IA pueda responder. Ve a Configuración y pégala ahí — es gratis y toma un minuto.</p>
+        <h2>1️⃣ Clave de IA</h2>
+        <p class="hint">Necesitas una clave de IA para que el asistente pueda responder. Ve a Configuración y pégala ahí. Puedes usar Groq (gratis) u OpenAI — <b>recomendamos OpenAI</b>, porque Groq tiene límites de uso más bajos.</p>
         <button class="cancel-btn" id="onboardingGoConfigBtn">Ir a Configuración</button>
         <button class="save-btn" id="onboardingStep2NextBtn">Ya la agregué, siguiente</button>
       </div>
       <div id="onboardingStep3" style="display:none">
         <h2>2️⃣ Conectar WhatsApp</h2>
-        <p class="hint">En la pestaña Inicio, dale a "Iniciar asistente" y escanea el código QR con tu WhatsApp Business.</p>
+        <p class="hint">En la pestaña Inicio, dale a "Iniciar asistente" — ahí mismo va a aparecer un código QR nuevo (no el que está más abajo, ese es para abrir el panel desde el celular). Escanéalo con tu WhatsApp Business.</p>
         <button class="cancel-btn" id="onboardingGoInicioBtn">Ir a Inicio</button>
         <button class="save-btn" id="onboardingStep3NextBtn">Ya lo conecté, siguiente</button>
       </div>
