@@ -1,6 +1,6 @@
 {
-  "version": "1.26.0",
-  "notes": "Actualización enorme: corrige duplicados, consulta de ordenes flexible, intervención humana oculta, cancelación en dos pasos, nuevo flujo de datos (domicilio por defecto), ofertas por cantidad, optimización grande de tokens (catálogo dinámico + reordenado para caché), ficha de datos editable, plantilla de guía manual, programación de entregas con recordatorio automático, banco de medios con reglas por imagen, iconos de etiqueta, acordeón de Configuración, sistema de reintentos ante errores, y más.",
+  "version": "1.26.1",
+  "notes": "Corrige el audio que no se descargaba en Android (bug conocido de Baileys, se soluciona mandando la duración exacta del audio), amplía el ancho de Configuración/Productos en PC, refuerza el acordeón de Configuración para que sí colapse, y corrige que cambiar el estado de un pedido a mano también mande el comprobante PDF.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
