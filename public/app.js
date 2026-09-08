@@ -290,12 +290,24 @@ async function loadConfig() {
   setupModelSelect('cfg-groqModel', 'cfg-groqModel-custom', cfg.groqModel);
   setupModelSelect('cfg-openaiModel', 'cfg-openaiModel-custom', cfg.openaiModel);
   setupModelSelect('cfg-deepseekModel', 'cfg-deepseekModel-custom', cfg.deepseekModel);
+  setProviderChoiceButton(cfg.aiProvider || 'groq');
 
   if (!cfg.onboardingCompleted) {
     document.getElementById('onboardingOverlay').style.display = 'flex';
   }
 }
 loadConfig();
+
+// ---- Botones grandes de "¿con qué quieres que te responda?" ----
+function setProviderChoiceButton(provider) {
+  document.getElementById('cfg-aiProvider').value = provider;
+  document.querySelectorAll('.provider-choice-btn').forEach((btn) => {
+    btn.classList.toggle('selected', btn.dataset.provider === provider);
+  });
+}
+document.querySelectorAll('.provider-choice-btn').forEach((btn) => {
+  btn.addEventListener('click', () => setProviderChoiceButton(btn.dataset.provider));
+});
 
 // ---------- Configuración en acordeón — se arma solo, sin tocar el HTML de
 // cada tarjeta (así no se rompe ninguna lógica de mostrar/ocultar campos que
