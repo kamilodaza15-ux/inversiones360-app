@@ -768,6 +768,25 @@ input:focus, select:focus, textarea:focus {
 .collapsible-card.open .card-accordion-body { display: block; }
 .collapsible-card #cfg-baseInstructions { min-height: 420px; }
 
+/* ---- Bloques de integraciones, cada uno con su color propio ---- */
+.integration-block {
+  border-left: 4px solid var(--border-color);
+  padding: 4px 0 4px 14px;
+  margin: 20px 0;
+}
+.integration-block h3 {
+  margin: 0 0 10px 0;
+  font-size: 1rem;
+}
+.integration-ai { border-left-color: #3b82f6; }
+.integration-ai h3 { color: #3b82f6; }
+.integration-voice { border-left-color: #8b5cf6; }
+.integration-voice h3 { color: #8b5cf6; }
+.integration-dropi { border-left-color: #f97316; }
+.integration-dropi h3 { color: #f97316; }
+.integration-skydropx { border-left-color: #a855f7; }
+.integration-skydropx h3 { color: #a855f7; }
+
 /* ---------- Tarjeta flotante de bienvenida (no bloquea la pantalla) ---------- */
 .onboarding-card {
   position: fixed;
