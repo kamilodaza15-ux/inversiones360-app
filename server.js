@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.27.3';
+const CURRENT_VERSION = '1.27.5';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -326,11 +326,12 @@ function convertMp3ToOggOpus(inputPath, outputPath) {
       .audioBitrate('64k')
       .audioChannels(1)
       // MiniMax entrega el audio a 32.000 Hz — Opus (el códec que exige
-      // WhatsApp) solo soporta de forma nativa 8k/12k/16k/24k/48k Hz. Sin
-      // decirle esto a ffmpeg, la conversión de 32k puede quedar mal
-      // formada de forma inconsistente — probablemente la causa real de
-      // "el archivo está dañado" que veníamos persiguiendo.
+      // WhatsApp) solo soporta de forma nativa 8k/12k/16k/24k/48k Hz.
       .audioFrequency(48000)
+      // Confirmado con prueba real: la nota de voz grabada desde el
+      // navegador (que SÍ funciona) usa estos mismos parámetros extra —
+      // unificamos ambas conversiones a los mismos ajustes probados.
+      .outputOptions(['-vbr', 'on', '-application', 'voip', '-compression_level', '10'])
       .format('ogg')
       .on('error', reject)
       .on('end', resolve)
