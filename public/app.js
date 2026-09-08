@@ -304,6 +304,10 @@ function setupCollapsibleCards() {
 
     const header = document.createElement('div');
     header.className = 'card-accordion-header';
+    header.style.cursor = 'pointer';
+    header.style.display = 'flex';
+    header.style.alignItems = 'center';
+    header.style.justifyContent = 'space-between';
     h2.parentNode.insertBefore(header, h2);
     header.appendChild(h2);
     const chevron = document.createElement('span');
@@ -313,15 +317,26 @@ function setupCollapsibleCards() {
 
     const body = document.createElement('div');
     body.className = 'card-accordion-body';
+    body.style.display = 'none'; // cerrado por defecto — puesto directo en línea, no solo por CSS, para que no dependa de que ninguna otra regla lo pise
     while (card.children.length > 1) {
       body.appendChild(card.children[1]);
     }
     card.appendChild(body);
 
-    header.addEventListener('click', () => card.classList.toggle('open'));
+    header.addEventListener('click', () => {
+      const isOpen = card.classList.toggle('open');
+      // Se pone también directo en línea, además de la clase — así funciona
+      // sin importar si algo más en el CSS le estaba ganando a la regla.
+      body.style.display = isOpen ? 'block' : 'none';
+      chevron.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+    });
   });
 }
 setupCollapsibleCards();
+// Por si algo bloqueó que corriera a tiempo la primera vez, se intenta de
+// nuevo un momento después — no hace daño repetirlo (el "accordionReady" de
+// arriba evita que se duplique en las tarjetas que ya quedaron listas).
+setTimeout(setupCollapsibleCards, 500);
 
 // ---------- Asistente de configuración inicial (onboarding) ----------
 function showOnboardingStep(n) {
