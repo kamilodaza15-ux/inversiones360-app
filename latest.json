@@ -1,6 +1,6 @@
 {
-  "version": "1.27.1",
-  "notes": "Skydropx: ahora jala peso/medidas de tus productos ya cargados en Skydropx (nuevo campo 'ID de producto en Skydropx' en cada producto), y aplica la regla de negocio de transportadora — a oficina siempre Interrápidísimo, a domicilio la más barata disponible.",
+  "version": "1.27.3",
+  "notes": "Reorganización visual: nueva sección 'Integraciones' en Configuración agrupando IA/Voz/Dropi/Skydropx con colores propios, y en Productos la lista aparece primero con el formulario de agregar colapsado. Sin cambios de lógica, solo de organización visual.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
