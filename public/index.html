@@ -34,6 +34,7 @@
 
       <div class="nav-item active" data-tab="inicio"><span class="nav-icon">🏠</span><span class="nav-label">Inicio</span></div>
       <div class="nav-item" data-tab="config"><span class="nav-icon">⚙️</span><span class="nav-label">Configuración</span></div>
+      <div class="nav-item" data-tab="integraciones"><span class="nav-icon">🧩</span><span class="nav-label">Integraciones</span></div>
       <div class="nav-item" data-tab="productos"><span class="nav-icon">🛍️</span><span class="nav-label">Productos</span></div>
       <div class="nav-item" data-tab="chats"><span class="nav-icon">💬</span><span class="nav-label">Chats</span></div>
       <div class="nav-item" data-tab="tableros"><span class="nav-icon">📋</span><span class="nav-label">Tableros</span></div>
@@ -121,157 +122,6 @@
           </div>
 
           <div class="card collapsible-card">
-            <h2>🧩 Integraciones</h2>
-            <p class="hint small" style="margin-top:0">Conecta aquí la IA que responde, la voz que usa, y las plataformas de envío — cada una guarda sus propias credenciales, por separado.</p>
-
-            <label>Subida automática de pedidos nuevos</label>
-            <select id="cfg-autoUploadProvider">
-              <option value="off">🔒 Apagado — subir manual con el botón del pedido</option>
-              <option value="dropi">🚀 Automático a Dropi</option>
-              <option value="skydropx">🚀 Automático a Skydropx</option>
-            </select>
-            <p class="hint small">Necesita que la integración correspondiente esté configurada abajo.</p>
-
-            <div class="integration-block integration-ai">
-              <h3>🤖 Proveedor de IA</h3>
-              <label>Proveedor</label>
-            <select id="cfg-aiProvider">
-              <option value="groq">Groq (gratis / rápido)</option>
-              <option value="openai">OpenAI</option>
-              <option value="deepseek">DeepSeek (barato, buena calidad)</option>
-            </select>
-
-            <label>Groq API Key</label>
-            <input id="cfg-groqApiKey" type="text" placeholder="gsk_..." />
-            <p class="hint small">¿No tienes clave de Groq? <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Consíguela gratis aquí</a> (Groq → API Keys → Create API Key).</p>
-            <label>Modelo de Groq</label>
-            <select id="cfg-groqModel">
-              <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (recomendado: rápido y barato)</option>
-              <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (más potente, mismo límite diario que el de arriba)</option>
-              <option value="qwen/qwen3.8-27b">qwen/qwen3.8-27b (mejor como respaldo: 10x más límite diario)</option>
-              <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b</option>
-              <option value="__custom__">Otro (escribir manualmente)...</option>
-            </select>
-            <p class="hint small">
-              <b>gpt-oss-20b</b> (uso diario) y <b>gpt-oss-120b</b> (respuestas más elaboradas, mismo límite) son modelos de "Producción" de Groq — estables para negocio real.
-              <b>qwen3.6/3.8-27b</b> son modelos "Preview" (evaluación) — Groq los puede apagar sin aviso, como pasó antes con otros modelos. Úsalos solo como plan B si te quedas sin cupo del día (qwen3.8-27b tiene 10x más límite diario), no como modelo principal.
-              Revisa tus límites actuales en <a href="https://console.groq.com/settings/limits" target="_blank" rel="noopener">console.groq.com/settings/limits</a>.
-            </p>
-            <input id="cfg-groqModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
-
-            <label>OpenAI API Key</label>
-            <input id="cfg-openaiApiKey" type="text" placeholder="sk-..." />
-            <p class="hint small">¿No tienes clave de OpenAI? <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Consíguela aquí</a> (requiere cuenta con saldo cargado).</p>
-            <label>Modelo de OpenAI</label>
-            <select id="cfg-openaiModel">
-              <option value="gpt-5.4-mini">gpt-5.4-mini (recomendado: rápido y barato)</option>
-              <option value="gpt-5.4">gpt-5.4 (más potente, más caro)</option>
-              <option value="gpt-5.4-nano">gpt-5.4-nano (el más económico)</option>
-              <option value="__custom__">Otro (escribir manualmente)...</option>
-            </select>
-            <input id="cfg-openaiModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
-
-            <label>DeepSeek API Key</label>
-            <input id="cfg-deepseekApiKey" type="text" placeholder="sk-..." />
-            <p class="hint small">¿No tienes clave de DeepSeek? <a href="https://platform.deepseek.com" target="_blank" rel="noopener">Consíguela aquí</a> — mucho más barata que OpenAI, buena calidad. Ten en cuenta que no transcribe audio, así que si la eliges, deja también tu clave de Groq u OpenAI arriba para las notas de voz.</p>
-            <label>Modelo de DeepSeek</label>
-            <select id="cfg-deepseekModel">
-              <option value="deepseek-v4-flash">deepseek-v4-flash (recomendado: rápido y muy barato)</option>
-              <option value="deepseek-v4-pro">deepseek-v4-pro (más potente, un poco más caro)</option>
-              <option value="__custom__">Otro (escribir manualmente)...</option>
-            </select>
-            <input id="cfg-deepseekModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
-            </div>
-
-            <div class="integration-block integration-voice">
-              <h3>🎙️ Voz del bot (clonación con MiniMax)</h3>
-              <p class="hint small" style="margin-top:0">A diferencia de Groq, <b>MiniMax no es gratis</b> — cobra por clonar la voz y por cada audio que genera después. Si no configuras esto (o lo dejas apagado), el bot responde en texto normal, como siempre.</p>
-
-              <label>MiniMax API Key</label>
-              <input id="cfg-minimaxApiKey" type="text" placeholder="tu API key de MiniMax" />
-              <label>MiniMax Group ID</label>
-              <input id="cfg-minimaxGroupId" type="text" placeholder="tu Group ID de MiniMax" />
-              <p class="hint small">Ambos los encuentras en tu cuenta de <a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> → API Keys.</p>
-
-              <label>Muestra de voz para clonar (mínimo 30 segundos)</label>
-              <input id="voice-sample" type="file" accept="audio/*" />
-              <button id="cloneVoiceBtn" class="save-btn" style="margin-top:8px">🎙️ Clonar voz</button>
-              <p id="voiceCloneStatus" class="hint small" style="margin-top:8px"></p>
-
-              <button id="listVoicesBtn" class="cancel-btn" style="margin-top:8px">🎧 Ver mis voces clonadas</button>
-              <div id="voiceList" style="margin-top:10px"></div>
-
-              <label style="margin-top:14px">Probar la voz seleccionada (solo la escuchas aquí, no se envía a ningún cliente)</label>
-              <textarea id="voice-preview-text" rows="2">Bienvenido a Inversiones 360, soy la asistente virtual. ¿En qué te puedo ayudar hoy?</textarea>
-              <button id="previewVoiceBtn" class="cancel-btn" style="margin-top:8px">▶ Probar voz</button>
-              <p id="voicePreviewStatus" class="hint small" style="margin-top:8px"></p>
-              <audio id="voicePreviewAudio" controls style="display:none;margin-top:8px;width:100%"></audio>
-
-              <label style="margin-top:14px">¿Cómo debe responder el bot a los clientes?</label>
-              <select id="cfg-voiceMode">
-                <option value="off">🔇 Apagado — siempre responde en texto</option>
-                <option value="voice">🔊 Siempre con voz clonada</option>
-                <option value="mirror">🪞 Modo espejo — si el cliente manda audio, responde audio; si escribe, responde texto</option>
-              </select>
-              <button id="saveVoiceConfigBtn" class="save-btn" style="margin-top:14px">Guardar configuración de voz</button>
-              <span id="voiceConfigSaved" class="saved-msg"></span>
-            </div>
-
-            <div class="integration-block integration-dropi">
-              <h3>🟠 Dropi</h3>
-              <label>Correo de tu cuenta de Dropi</label>
-              <input id="cfg-dropiEmail" type="text" placeholder="tucorreo@ejemplo.com" />
-              <label>Contraseña de tu cuenta de Dropi</label>
-              <input id="cfg-dropiPassword" type="password" placeholder="••••••••" />
-              <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
-                <input id="cfg-dropiUseTestEnv" type="checkbox" style="width:auto" />
-                Usar ambiente de pruebas de Dropi (para probar sin arriesgar pedidos reales)
-              </label>
-              <p class="hint small">Son las mismas credenciales con las que entras a dropi.co. Se guardan solo en tu computador, nunca se comparten.</p>
-            </div>
-
-            <div class="integration-block integration-skydropx">
-              <h3>🟣 Skydropx</h3>
-              <label>Client ID de Skydropx</label>
-              <input id="cfg-skydropxClientId" type="text" placeholder="Pégalo aquí" />
-              <label>Client Secret de Skydropx</label>
-              <input id="cfg-skydropxClientSecret" type="password" placeholder="••••••••" />
-              <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
-                <input id="cfg-skydropxUseTestEnv" type="checkbox" style="width:auto" />
-                Usar ambiente de pruebas (sandbox) de Skydropx
-              </label>
-              <p class="hint small">Las credenciales se sacan en Skydropx → Conexiones → API. Se guardan solo en tu computador, nunca se comparten.</p>
-
-              <label style="margin-top:12px">Dirección de origen de tus envíos (bodega/oficina)</label>
-              <input id="cfg-skydropxOriginName" type="text" placeholder="Nombre de quien envía" />
-              <input id="cfg-skydropxOriginStreet" type="text" placeholder="Calle/carrera y número" style="margin-top:8px" />
-              <div class="price-row" style="margin-top:8px">
-                <input id="cfg-skydropxOriginCity" type="text" placeholder="Ciudad" />
-                <input id="cfg-skydropxOriginState" type="text" placeholder="Departamento" />
-              </div>
-              <div class="price-row" style="margin-top:8px">
-                <input id="cfg-skydropxOriginPostalCode" type="text" placeholder="Código postal" />
-                <input id="cfg-skydropxOriginPhone" type="text" placeholder="Teléfono" />
-              </div>
-              <input id="cfg-skydropxOriginEmail" type="text" placeholder="Correo de contacto" style="margin-top:8px" />
-              <input id="cfg-skydropxOriginReference" type="text" placeholder="Referencia (ej. Local 5, cerca al parque)" style="margin-top:8px" />
-
-              <label style="margin-top:12px">Medidas por defecto del paquete (ajústalas a lo que sueles enviar)</label>
-              <div class="price-row">
-                <input id="cfg-skydropxDefaultWeightKg" type="number" step="0.1" placeholder="Peso (kg)" />
-                <input id="cfg-skydropxDefaultLengthCm" type="number" placeholder="Largo (cm)" />
-              </div>
-              <div class="price-row" style="margin-top:8px">
-                <input id="cfg-skydropxDefaultWidthCm" type="number" placeholder="Ancho (cm)" />
-                <input id="cfg-skydropxDefaultHeightCm" type="number" placeholder="Alto (cm)" />
-              </div>
-            </div>
-
-            <button id="saveAiProviderBtn" class="save-btn">Guardar integraciones</button>
-            <span id="aiProviderSaved" class="saved-msg"></span>
-          </div>
-
-          <div class="card collapsible-card">
             <h2>Secuencia de seguimiento (remarketing)</h2>
             <p class="hint small">Si un cliente pregunta por un producto y se queda callado sin comprar, el bot le puede escribir solo, unas horas después, para recordarle la oferta.</p>
             <p class="hint small"><b>(Recomendado: máximo 2-3 mensajes, para evitar riesgo de baneo de WhatsApp)</b></p>
@@ -319,6 +169,174 @@
             <p class="hint">Versión instalada: <b id="currentVersionLabel">...</b></p>
             <button id="checkUpdateBtn" class="save-btn">🔄 Buscar actualizaciones</button>
             <div id="updateResult" style="margin-top:14px"></div>
+          </div>
+        </div></div>
+      </section>
+
+      <section id="tab-integraciones" class="tab-content">
+        <div class="main-scroll"><div class="inner-narrow">
+          <div class="card">
+            <h2 style="margin-top:0">¿Con qué quieres que te responda?</h2>
+            <p class="hint small" style="margin-top:0">Esta elección aplica de una — no hace falta desplegar nada, solo escoge.</p>
+            <div class="provider-choice-row">
+              <button type="button" class="provider-choice-btn provider-choice-groq" data-provider="groq">
+                <span class="provider-choice-emoji">⚡</span>Groq
+              </button>
+              <button type="button" class="provider-choice-btn provider-choice-openai" data-provider="openai">
+                <span class="provider-choice-emoji">🧠</span>OpenAI
+              </button>
+              <button type="button" class="provider-choice-btn provider-choice-deepseek" data-provider="deepseek">
+                <span class="provider-choice-emoji">🌊</span>DeepSeek
+              </button>
+            </div>
+            <input type="hidden" id="cfg-aiProvider" value="groq" />
+
+            <label style="margin-top:18px">Subida automática de pedidos nuevos</label>
+            <select id="cfg-autoUploadProvider">
+              <option value="off">🔒 Apagado — subir manual con el botón del pedido</option>
+              <option value="dropi">🚀 Automático a Dropi</option>
+              <option value="skydropx">🚀 Automático a Skydropx</option>
+            </select>
+            <p class="hint small">Necesita que la integración correspondiente esté configurada abajo.</p>
+          </div>
+
+          <div class="card collapsible-card integration-card-groq">
+            <h2>⚡ Groq</h2>
+            <label>Groq API Key</label>
+            <input id="cfg-groqApiKey" type="text" placeholder="gsk_..." />
+            <p class="hint small">¿No tienes clave de Groq? <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Consíguela gratis aquí</a> (Groq → API Keys → Create API Key).</p>
+            <label>Modelo de Groq</label>
+            <select id="cfg-groqModel">
+              <option value="openai/gpt-oss-20b">openai/gpt-oss-20b (recomendado: rápido y barato)</option>
+              <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (más potente, mismo límite diario que el de arriba)</option>
+              <option value="qwen/qwen3.8-27b">qwen/qwen3.8-27b (mejor como respaldo: 10x más límite diario)</option>
+              <option value="qwen/qwen3.6-27b">qwen/qwen3.6-27b</option>
+              <option value="__custom__">Otro (escribir manualmente)...</option>
+            </select>
+            <p class="hint small">
+              <b>gpt-oss-20b</b> (uso diario) y <b>gpt-oss-120b</b> (respuestas más elaboradas, mismo límite) son modelos de "Producción" de Groq — estables para negocio real.
+              <b>qwen3.6/3.8-27b</b> son modelos "Preview" (evaluación) — Groq los puede apagar sin aviso, como pasó antes con otros modelos. Úsalos solo como plan B si te quedas sin cupo del día (qwen3.8-27b tiene 10x más límite diario), no como modelo principal.
+              Revisa tus límites actuales en <a href="https://console.groq.com/settings/limits" target="_blank" rel="noopener">console.groq.com/settings/limits</a>.
+            </p>
+            <input id="cfg-groqModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
+          </div>
+
+          <div class="card collapsible-card integration-card-openai">
+            <h2>🧠 OpenAI</h2>
+            <label>OpenAI API Key</label>
+            <input id="cfg-openaiApiKey" type="text" placeholder="sk-..." />
+            <p class="hint small">¿No tienes clave de OpenAI? <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Consíguela aquí</a> (requiere cuenta con saldo cargado).</p>
+            <label>Modelo de OpenAI</label>
+            <select id="cfg-openaiModel">
+              <option value="gpt-5.4-mini">gpt-5.4-mini (recomendado: rápido y barato)</option>
+              <option value="gpt-5.4">gpt-5.4 (más potente, más caro)</option>
+              <option value="gpt-5.4-nano">gpt-5.4-nano (el más económico)</option>
+              <option value="__custom__">Otro (escribir manualmente)...</option>
+            </select>
+            <input id="cfg-openaiModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
+          </div>
+
+          <div class="card collapsible-card integration-card-deepseek">
+            <h2>🌊 DeepSeek</h2>
+            <label>DeepSeek API Key</label>
+            <input id="cfg-deepseekApiKey" type="text" placeholder="sk-..." />
+            <p class="hint small">¿No tienes clave de DeepSeek? <a href="https://platform.deepseek.com" target="_blank" rel="noopener">Consíguela aquí</a> — mucho más barata que OpenAI, buena calidad. Ten en cuenta que no transcribe audio, así que si la eliges, deja también tu clave de Groq u OpenAI en su sección para las notas de voz.</p>
+            <label>Modelo de DeepSeek</label>
+            <select id="cfg-deepseekModel">
+              <option value="deepseek-v4-flash">deepseek-v4-flash (recomendado: rápido y muy barato)</option>
+              <option value="deepseek-v4-pro">deepseek-v4-pro (más potente, un poco más caro)</option>
+              <option value="__custom__">Otro (escribir manualmente)...</option>
+            </select>
+            <input id="cfg-deepseekModel-custom" type="text" placeholder="nombre exacto del modelo" style="display:none;margin-top:8px" />
+          </div>
+
+          <div class="card collapsible-card integration-card-voice">
+            <h2>🎙️ Clonación de audio (MiniMax)</h2>
+            <p class="hint small" style="margin-top:0">A diferencia de Groq, <b>MiniMax no es gratis</b> — cobra por clonar la voz y por cada audio que genera después. Si no configuras esto (o lo dejas apagado), el bot responde en texto normal, como siempre.</p>
+
+            <label>MiniMax API Key</label>
+            <input id="cfg-minimaxApiKey" type="text" placeholder="tu API key de MiniMax" />
+            <label>MiniMax Group ID</label>
+            <input id="cfg-minimaxGroupId" type="text" placeholder="tu Group ID de MiniMax" />
+            <p class="hint small">Ambos los encuentras en tu cuenta de <a href="https://platform.minimax.io" target="_blank" rel="noopener">platform.minimax.io</a> → API Keys.</p>
+
+            <label>Muestra de voz para clonar (mínimo 30 segundos)</label>
+            <input id="voice-sample" type="file" accept="audio/*" />
+            <button id="cloneVoiceBtn" class="save-btn" style="margin-top:8px">🎙️ Clonar voz</button>
+            <p id="voiceCloneStatus" class="hint small" style="margin-top:8px"></p>
+
+            <button id="listVoicesBtn" class="cancel-btn" style="margin-top:8px">🎧 Ver mis voces clonadas</button>
+            <div id="voiceList" style="margin-top:10px"></div>
+
+            <label style="margin-top:14px">Probar la voz seleccionada (solo la escuchas aquí, no se envía a ningún cliente)</label>
+            <textarea id="voice-preview-text" rows="2">Bienvenido a Inversiones 360, soy la asistente virtual. ¿En qué te puedo ayudar hoy?</textarea>
+            <button id="previewVoiceBtn" class="cancel-btn" style="margin-top:8px">▶ Probar voz</button>
+            <p id="voicePreviewStatus" class="hint small" style="margin-top:8px"></p>
+            <audio id="voicePreviewAudio" controls style="display:none;margin-top:8px;width:100%"></audio>
+
+            <label style="margin-top:14px">¿Cómo debe responder el bot a los clientes?</label>
+            <select id="cfg-voiceMode">
+              <option value="off">🔇 Apagado — siempre responde en texto</option>
+              <option value="voice">🔊 Siempre con voz clonada</option>
+              <option value="mirror">🪞 Modo espejo — si el cliente manda audio, responde audio; si escribe, responde texto</option>
+            </select>
+            <button id="saveVoiceConfigBtn" class="save-btn" style="margin-top:14px">Guardar configuración de voz</button>
+            <span id="voiceConfigSaved" class="saved-msg"></span>
+          </div>
+
+          <div class="card collapsible-card integration-card-dropi">
+            <h2>🟠 Dropi</h2>
+            <label>Correo de tu cuenta de Dropi</label>
+            <input id="cfg-dropiEmail" type="text" placeholder="tucorreo@ejemplo.com" />
+            <label>Contraseña de tu cuenta de Dropi</label>
+            <input id="cfg-dropiPassword" type="password" placeholder="••••••••" />
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+              <input id="cfg-dropiUseTestEnv" type="checkbox" style="width:auto" />
+              Usar ambiente de pruebas de Dropi (para probar sin arriesgar pedidos reales)
+            </label>
+            <p class="hint small">Son las mismas credenciales con las que entras a dropi.co. Se guardan solo en tu computador, nunca se comparten.</p>
+          </div>
+
+          <div class="card collapsible-card integration-card-skydropx">
+            <h2>🟣 Skydropx</h2>
+            <label>Client ID de Skydropx</label>
+            <input id="cfg-skydropxClientId" type="text" placeholder="Pégalo aquí" />
+            <label>Client Secret de Skydropx</label>
+            <input id="cfg-skydropxClientSecret" type="password" placeholder="••••••••" />
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+              <input id="cfg-skydropxUseTestEnv" type="checkbox" style="width:auto" />
+              Usar ambiente de pruebas (sandbox) de Skydropx
+            </label>
+            <p class="hint small">Las credenciales se sacan en Skydropx → Conexiones → API. Se guardan solo en tu computador, nunca se comparten.</p>
+
+            <label style="margin-top:12px">Dirección de origen de tus envíos (bodega/oficina)</label>
+            <input id="cfg-skydropxOriginName" type="text" placeholder="Nombre de quien envía" />
+            <input id="cfg-skydropxOriginStreet" type="text" placeholder="Calle/carrera y número" style="margin-top:8px" />
+            <div class="price-row" style="margin-top:8px">
+              <input id="cfg-skydropxOriginCity" type="text" placeholder="Ciudad" />
+              <input id="cfg-skydropxOriginState" type="text" placeholder="Departamento" />
+            </div>
+            <div class="price-row" style="margin-top:8px">
+              <input id="cfg-skydropxOriginPostalCode" type="text" placeholder="Código postal" />
+              <input id="cfg-skydropxOriginPhone" type="text" placeholder="Teléfono" />
+            </div>
+            <input id="cfg-skydropxOriginEmail" type="text" placeholder="Correo de contacto" style="margin-top:8px" />
+            <input id="cfg-skydropxOriginReference" type="text" placeholder="Referencia (ej. Local 5, cerca al parque)" style="margin-top:8px" />
+
+            <label style="margin-top:12px">Medidas por defecto del paquete (ajústalas a lo que sueles enviar)</label>
+            <div class="price-row">
+              <input id="cfg-skydropxDefaultWeightKg" type="number" step="0.1" placeholder="Peso (kg)" />
+              <input id="cfg-skydropxDefaultLengthCm" type="number" placeholder="Largo (cm)" />
+            </div>
+            <div class="price-row" style="margin-top:8px">
+              <input id="cfg-skydropxDefaultWidthCm" type="number" placeholder="Ancho (cm)" />
+              <input id="cfg-skydropxDefaultHeightCm" type="number" placeholder="Alto (cm)" />
+            </div>
+          </div>
+
+          <div class="card">
+            <button id="saveAiProviderBtn" class="save-btn">Guardar integraciones</button>
+            <span id="aiProviderSaved" class="saved-msg"></span>
           </div>
         </div></div>
       </section>
