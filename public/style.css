@@ -787,6 +787,44 @@ input:focus, select:focus, textarea:focus {
 .integration-skydropx { border-left-color: #a855f7; }
 .integration-skydropx h3 { color: #a855f7; }
 
+/* ---- Botones grandes de "¿con qué quieres que te responda?" ---- */
+.provider-choice-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.provider-choice-btn {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 2px solid var(--border-color);
+  background: var(--bg-secondary, #f8f8f8);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.15s;
+  color: var(--text-primary);
+}
+.provider-choice-btn:hover { transform: translateY(-2px); }
+.provider-choice-emoji { font-size: 1.4rem; }
+.provider-choice-groq.selected { border-color: #f97316; background: rgba(249,115,22,0.12); box-shadow: 0 0 0 3px rgba(249,115,22,0.15); }
+.provider-choice-openai.selected { border-color: #10a37f; background: rgba(16,163,127,0.12); box-shadow: 0 0 0 3px rgba(16,163,127,0.15); }
+.provider-choice-deepseek.selected { border-color: #6366f1; background: rgba(99,102,241,0.12); box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+
+/* ---- Tarjetas de integración, cada una con su color en la pestaña Integraciones ---- */
+.integration-card-groq { border-top: 4px solid #f97316; }
+.integration-card-openai { border-top: 4px solid #10a37f; }
+.integration-card-deepseek { border-top: 4px solid #6366f1; }
+.integration-card-voice { border-top: 4px solid #ec4899; }
+.integration-card-dropi { border-top: 4px solid #f97316; }
+.integration-card-skydropx { border-top: 4px solid #a855f7; }
+
 /* ---------- Tarjeta flotante de bienvenida (no bloquea la pantalla) ---------- */
 .onboarding-card {
   position: fixed;
