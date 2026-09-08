@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.27.5';
+const CURRENT_VERSION = '1.27.6';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -328,10 +328,16 @@ function convertMp3ToOggOpus(inputPath, outputPath) {
       // MiniMax entrega el audio a 32.000 Hz — Opus (el códec que exige
       // WhatsApp) solo soporta de forma nativa 8k/12k/16k/24k/48k Hz.
       .audioFrequency(48000)
-      // Confirmado con prueba real: la nota de voz grabada desde el
-      // navegador (que SÍ funciona) usa estos mismos parámetros extra —
-      // unificamos ambas conversiones a los mismos ajustes probados.
-      .outputOptions(['-vbr', 'on', '-application', 'voip', '-compression_level', '10'])
+      .outputOptions([
+        '-vbr', 'on', '-application', 'voip', '-compression_level', '10',
+        // CAUSA REAL encontrada revisando un archivo real: MiniMax mete una
+        // etiqueta gigante llamada "AIGC" dentro del audio (un sello
+        // regulatorio chino, con firmas digitales y certificados) — sin
+        // este parámetro, ffmpeg la copia tal cual al archivo final, y
+        // WhatsApp la rechaza como "dañada". "-map_metadata -1" borra TODA
+        // metadata del archivo de salida, dejando solo el audio limpio.
+        '-map_metadata', '-1',
+      ])
       .format('ogg')
       .on('error', reject)
       .on('end', resolve)
@@ -363,7 +369,7 @@ function convertRecordingToOggOpus(inputPath, outputPath) {
       .audioBitrate('64k')
       .audioChannels(1)
       .audioFrequency(48000)
-      .outputOptions(['-vbr', 'on', '-application', 'voip', '-compression_level', '10'])
+      .outputOptions(['-vbr', 'on', '-application', 'voip', '-compression_level', '10', '-map_metadata', '-1'])
       .format('ogg')
       .on('error', reject)
       .on('end', resolve)
