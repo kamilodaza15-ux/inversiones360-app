@@ -232,6 +232,10 @@ const cfgFields = [
   'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
   'responseDelaySeconds', 'notificationPhoneNumber', 'pauseDurationMinutes', 'aiProvider', 'groqApiKey',
   'openaiApiKey', 'deepseekApiKey', 'autoUploadProvider', 'dropiEmail', 'dropiPassword',
+  'skydropxClientId', 'skydropxClientSecret',
+  'skydropxOriginName', 'skydropxOriginStreet', 'skydropxOriginCity', 'skydropxOriginState',
+  'skydropxOriginPostalCode', 'skydropxOriginPhone', 'skydropxOriginEmail', 'skydropxOriginReference',
+  'skydropxDefaultWeightKg', 'skydropxDefaultLengthCm', 'skydropxDefaultWidthCm', 'skydropxDefaultHeightCm',
 ];
 // groqModel y openaiModel se manejan aparte porque son selects con opción
 // "otro personalizado" (por si el modelo que quieren no está en la lista).
@@ -279,6 +283,7 @@ async function loadConfig() {
   document.getElementById('cfg-voiceMode').value = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
   document.getElementById('cfg-confirmOrderDataBeforeClosing').checked = !!cfg.confirmOrderDataBeforeClosing;
   document.getElementById('cfg-dropiUseTestEnv').checked = !!cfg.dropiUseTestEnv;
+  document.getElementById('cfg-skydropxUseTestEnv').checked = !!cfg.skydropxUseTestEnv;
   document.getElementById('cfg-minimaxApiKey').value = cfg.minimaxApiKey || '';
   document.getElementById('cfg-minimaxGroupId').value = cfg.minimaxGroupId || '';
   updateVoiceCloneStatus(cfg);
@@ -372,6 +377,7 @@ async function saveMainConfig(savedLabelId) {
   body.deepseekModel = getModelValue('cfg-deepseekModel', 'cfg-deepseekModel-custom');
   body.confirmOrderDataBeforeClosing = document.getElementById('cfg-confirmOrderDataBeforeClosing').checked;
   body.dropiUseTestEnv = document.getElementById('cfg-dropiUseTestEnv').checked;
+  body.skydropxUseTestEnv = document.getElementById('cfg-skydropxUseTestEnv').checked;
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1956,6 +1962,7 @@ async function loadProducts() {
       document.getElementById('p-priceAfter').value = p.priceAfter || '';
       document.getElementById('p-keywords').value = (p.keywords || []).join(', ');
       document.getElementById('p-dropiProductId').value = p.dropiProductId || '';
+      document.getElementById('p-skydropxProductId').value = p.skydropxProductId || '';
       quantityOffersState = p.quantityOffers ? [...p.quantityOffers] : [];
       renderQuantityOffers();
       document.getElementById('p-details').value = p.details;
@@ -1991,6 +1998,7 @@ productForm.addEventListener('submit', async (e) => {
   formData.append('priceAfter', document.getElementById('p-priceAfter').value);
   formData.append('keywords', document.getElementById('p-keywords').value);
   formData.append('dropiProductId', document.getElementById('p-dropiProductId').value);
+  formData.append('skydropxProductId', document.getElementById('p-skydropxProductId').value);
   formData.append('quantityOffers', JSON.stringify(quantityOffersState.filter((o) => o.price)));
   formData.append('details', document.getElementById('p-details').value);
   const imageFiles = document.getElementById('p-images').files;
