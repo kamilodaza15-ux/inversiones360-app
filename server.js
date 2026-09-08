@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.27.1';
+const CURRENT_VERSION = '1.27.3';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -212,12 +212,85 @@ function resolveFfmpegPath() {
 // resuelve "perezosamente" — solo la primera vez que de verdad se necesita
 // enviar un audio — y si falla, el bot simplemente responde en texto en vez
 // de audio (ver el try/catch alrededor de sendVoiceReply más abajo).
+// Mismo patrón que resolveFfmpegPath() de arriba, pero para "ffprobe" — una
+// herramienta hermana de ffmpeg que fluent-ffmpeg necesita por separado para
+// poder leer datos de un archivo (como su duración exacta). Nunca la
+// habíamos configurado, así que sin querer siempre fallaba en silencio y
+// caíamos en "1 segundo" de duración para CUALQUIER nota de voz — muy
+// probablemente la causa real detrás de que WhatsApp rechazara el audio
+// como "dañado", ya que la duración no coincidía con el archivo real.
+function resolveFfprobePath() {
+  const candidates = [];
+  let staticPath = null;
+
+  try {
+    staticPath = require('@ffprobe-installer/ffprobe').path;
+    if (staticPath && !/app\.asar([\\/]|$)/i.test(staticPath)) {
+      candidates.push(staticPath);
+    }
+  } catch (err) {
+    console.warn('No se pudo cargar @ffprobe-installer/ffprobe:', err.message);
+  }
+
+  if (process.resourcesPath) {
+    candidates.push(
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '@ffprobe-installer', 'win32-x64', 'ffprobe.exe'),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '@ffprobe-installer', 'linux-x64', 'ffprobe'),
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '@ffprobe-installer', 'darwin-x64', 'ffprobe')
+    );
+  }
+
+  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+    if (fs.existsSync(candidate) && !/app\.asar([\\/]|$)/i.test(candidate)) {
+      console.log('✅ FFprobe encontrado:', candidate);
+      return candidate;
+    }
+  }
+
+  // Si está empaquetado dentro de app.asar, lo copiamos afuera igual que a ffmpeg.
+  if (staticPath && /app\.asar([\\/]|$)/i.test(staticPath) && fs.existsSync(staticPath)) {
+    const localAppData = process.env.LOCALAPPDATA || process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Local');
+    const runtimeDir = path.join(localAppData, 'Inversiones360Chat', 'ffmpeg-runtime');
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const runtimePath = path.join(runtimeDir, `ffprobe${ext}`);
+    try {
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      fs.copyFileSync(staticPath, runtimePath);
+      if (fs.existsSync(runtimePath)) {
+        console.log('✅ FFprobe extraído fuera de app.asar:', runtimePath);
+        return runtimePath;
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo extraer FFprobe fuera de app.asar:', err.message);
+    }
+  }
+
+  // En Termux/Android, "pkg install ffmpeg" instala ffprobe junto con ffmpeg
+  // en el sistema — revisamos si ya está disponible así.
+  try {
+    const { execSync } = require('child_process');
+    execSync('ffprobe -version', { stdio: 'ignore' });
+    console.log('✅ FFprobe encontrado en el PATH del sistema.');
+    return 'ffprobe';
+  } catch (err) {
+    // no está en el PATH tampoco
+  }
+
+  console.warn('⚠️ FFprobe no encontrado — la duración de las notas de voz usará un valor de respaldo.');
+  return null;
+}
+
 let cachedFfmpegPath = null;
 function ensureFfmpegConfigured() {
   if (!cachedFfmpegPath) {
     cachedFfmpegPath = resolveFfmpegPath();
     console.log('🎙️ FFmpeg que usará fluent-ffmpeg:', cachedFfmpegPath);
     ffmpeg.setFfmpegPath(cachedFfmpegPath);
+
+    const ffprobePath = resolveFfprobePath();
+    if (ffprobePath) {
+      ffmpeg.setFfprobePath(ffprobePath);
+    }
 
     // Baileys también necesita "ffmpeg" para procesar audio (por ejemplo,
     // para calcular la forma de onda de las notas de voz) y lo busca por su
@@ -227,6 +300,12 @@ function ensureFfmpegConfigured() {
     const ffmpegDir = path.dirname(cachedFfmpegPath);
     if (!process.env.PATH.includes(ffmpegDir)) {
       process.env.PATH = `${ffmpegDir}${path.delimiter}${process.env.PATH}`;
+    }
+    if (ffprobePath && ffprobePath !== 'ffprobe') {
+      const ffprobeDir = path.dirname(ffprobePath);
+      if (!process.env.PATH.includes(ffprobeDir)) {
+        process.env.PATH = `${ffprobeDir}${path.delimiter}${process.env.PATH}`;
+      }
     }
   }
   return cachedFfmpegPath;
@@ -2426,6 +2505,7 @@ function getAudioDurationSeconds(filePath) {
   return new Promise((resolve) => {
     ffmpeg.ffprobe(filePath, (err, metadata) => {
       if (err || !metadata?.format?.duration) {
+        console.warn('⚠️ No se pudo calcular la duración real del audio con ffprobe, se usará 1 segundo de respaldo:', err?.message || 'sin duración en los metadatos');
         resolve(1); // mejor un valor de respaldo que dejar el campo vacío
         return;
       }
