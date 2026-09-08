@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.26.1';
+const CURRENT_VERSION = '1.27.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -246,11 +246,28 @@ function convertMp3ToOggOpus(inputPath, outputPath) {
       .audioCodec('libopus')
       .audioBitrate('64k')
       .audioChannels(1)
+      // MiniMax entrega el audio a 32.000 Hz — Opus (el códec que exige
+      // WhatsApp) solo soporta de forma nativa 8k/12k/16k/24k/48k Hz. Sin
+      // decirle esto a ffmpeg, la conversión de 32k puede quedar mal
+      // formada de forma inconsistente — probablemente la causa real de
+      // "el archivo está dañado" que veníamos persiguiendo.
+      .audioFrequency(48000)
       .format('ogg')
       .on('error', reject)
       .on('end', resolve)
       .save(outputPath);
   });
+}
+
+// Antes de mandar CUALQUIER audio por WhatsApp, se confirma que el archivo
+// convertido de verdad exista y no esté vacío/truncado — si ffmpeg falló
+// silenciosamente (0 bytes), mejor darse cuenta aquí y avisar claro, que
+// mandarle a WhatsApp un archivo roto sin saberlo.
+function assertValidAudioFile(oggPath) {
+  const stats = fs.statSync(oggPath);
+  if (stats.size < 500) {
+    throw new Error(`El archivo de audio convertido quedó sospechosamente pequeño (${stats.size} bytes) — probablemente la conversión falló silenciosamente.`);
+  }
 }
 
 // Conversión para la nota de voz grabada desde el navegador (botón del
@@ -502,6 +519,7 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
     priceAfter: req.body.priceAfter || '',
     details: req.body.details || '',
     dropiProductId: req.body.dropiProductId || '',
+    skydropxProductId: req.body.skydropxProductId || '',
     quantityOffers,
     images: (files.images || []).map((f) => `/media/${f.filename}`),
     video: (files.video || [])[0] ? `/media/${files.video[0].filename}` : '',
@@ -533,6 +551,7 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
     priceAfter: req.body.priceAfter ?? existing.priceAfter,
     details: req.body.details ?? existing.details,
     dropiProductId: req.body.dropiProductId ?? (existing.dropiProductId || ''),
+    skydropxProductId: req.body.skydropxProductId ?? (existing.skydropxProductId || ''),
     quantityOffers,
     keywords:
       req.body.keywords !== undefined
@@ -786,6 +805,7 @@ app.post('/api/clients/:jid/send-voice-recording', uploadVoiceRecording, async (
     ensureFfmpegConfigured();
     await convertRecordingToOggOpus(inputPath, oggPath);
     const oggBuffer = fs.readFileSync(oggPath);
+    assertValidAudioFile(oggPath);
     const seconds = await getAudioDurationSeconds(oggPath);
     await sendAndTrack(jid, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds });
 
@@ -1205,18 +1225,21 @@ async function uploadOrderToDropi(order) {
     ],
   };
 
-  const data = await dropiRequest(cfg, '/orders/myorders', { method: 'POST', body: JSON.stringify(body) });
+  // Se llama SIEMPRE que un pedido se suba con éxito a CUALQUIER plataforma de
+// envíos (Dropi, Skydropx, o la que se conecte en el futuro) — deja todo en
+// un solo lugar compartido, para que sea imposible que a una integración
+// nueva se le olvide pasar a "Confirmado" y mandar el comprobante.
+async function markOrderConfirmedAndNotify(orderId, extraFields) {
+  updateOrder(orderId, { status: 'confirmado', ...extraFields });
+  await sendOrderPdfIfNeeded(orders.find((o) => o.id === orderId));
+}
+
+const data = await dropiRequest(cfg, '/orders/myorders', { method: 'POST', body: JSON.stringify(body) });
   if (!data.isSuccess) {
     throw new Error(data.message || 'Dropi rechazó la orden.');
   }
 
-  updateOrder(order.id, {
-    dropiOrderId: data.objects.id,
-    status: 'confirmado',
-  });
-  // Se manda el comprobante justo aquí — la primera vez que el pedido pasa
-  // de Pendiente a Confirmado, nunca antes ni en cambios posteriores.
-  await sendOrderPdfIfNeeded(orders.find((o) => o.id === order.id));
+  await markOrderConfirmedAndNotify(order.id, { dropiOrderId: data.objects.id });
   return data.objects;
 }
 
@@ -1280,14 +1303,213 @@ async function checkDropiOrderStatus(orderId) {
 }
 
 
+// ---------- Skydropx: login OAuth2, cotizar, y crear el envío ----------
+function skydropxBaseUrl(cfg) {
+  // El texto de su propia documentación dice explícitamente "usa el host
+  // correcto: api-pro.skydropx.com" para producción — para sandbox seguimos
+  // el mismo patrón que usan para encontrar credenciales (sb-pro / pro).
+  return cfg.skydropxUseTestEnv ? 'https://api-sb-pro.skydropx.com' : 'https://api-pro.skydropx.com';
+}
+
+let skydropxTokenCache = null;
+let skydropxTokenExpiresAt = 0;
+
+async function skydropxLogin(cfg) {
+  if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
+    throw new Error('Falta configurar el Client ID y Client Secret de Skydropx en Configuración.');
+  }
+  let res;
+  try {
+    res = await fetch(`${skydropxBaseUrl(cfg)}/api/v1/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: cfg.skydropxClientId,
+        client_secret: cfg.skydropxClientSecret,
+      }),
+    });
+  } catch (e) {
+    throw new Error(`No se pudo conectar con Skydropx — revisa tu conexión a internet. Detalle: ${e.message}`);
+  }
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Skydropx respondió algo inesperado (código ${res.status}), no fue posible leerlo. Detalle: ${text.slice(0, 150)}`);
+  }
+  if (!data.access_token) {
+    throw new Error(data.error_description || data.error || 'Skydropx rechazó el inicio de sesión — revisa el Client ID y Client Secret.');
+  }
+  skydropxTokenCache = data.access_token;
+  // Restamos 2 minutos de margen, para nunca usar un token a punto de vencer.
+  skydropxTokenExpiresAt = Date.now() + (data.expires_in - 120) * 1000;
+  return data.access_token;
+}
+
+async function skydropxRequest(cfg, path, options = {}) {
+  if (!skydropxTokenCache || Date.now() >= skydropxTokenExpiresAt) {
+    await skydropxLogin(cfg);
+  }
+  let res;
+  try {
+    res = await fetch(`${skydropxBaseUrl(cfg)}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${skydropxTokenCache}`,
+        ...(options.headers || {}),
+      },
+    });
+  } catch (e) {
+    throw new Error(`No se pudo conectar con Skydropx — revisa tu conexión a internet. Detalle: ${e.message}`);
+  }
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Skydropx respondió algo inesperado (código ${res.status}), no fue posible leerlo. Detalle: ${text.slice(0, 150)}`);
+  }
+  if (res.status === 401) {
+    // Token vencido a mitad de camino — se reintenta una vez con uno nuevo.
+    await skydropxLogin(cfg);
+    return skydropxRequest(cfg, path, options);
+  }
+  if (data.error) {
+    throw new Error(data.error_description || data.error);
+  }
+  return data;
+}
+
+// Jala el peso/medidas de un producto ya cargado en Skydropx — evita tener
+// que repetir esos datos a mano en Configuración cuando ya los tienes allá.
+async function getSkydropxProductDimensions(cfg, skydropxProductId) {
+  if (!skydropxProductId) return null;
+  try {
+    const data = await skydropxRequest(cfg, '/api/v1/products');
+    const products = data?.data || [];
+    const match = products.find((p) => p.id === skydropxProductId);
+    if (!match) return null;
+    const attrs = match.attributes || {};
+    return {
+      weight: Number(attrs.weight) || null,
+      length: Number(attrs.length) || null,
+      width: Number(attrs.width) || null,
+      height: Number(attrs.height) || null,
+    };
+  } catch (e) {
+    console.error('No se pudieron jalar las medidas del producto en Skydropx, se usan las de Configuración:', e.message);
+    return null;
+  }
+}
+
 async function uploadOrderToSkydropx(order) {
   const cfg = readConfig();
-  if (!cfg.skydropxApiKey) {
-    throw new Error('Falta configurar la API de Skydropx (todavía no tenemos la documentación/credenciales conectadas).');
+  if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
+    throw new Error('Falta configurar el Client ID y Client Secret de Skydropx en Configuración.');
   }
-  // TODO: cuando tengamos la documentación real de la API de Skydropx, aquí
-  // va la llamada real para crear el envío/guía.
-  throw new Error('La conexión real con Skydropx todavía no está implementada.');
+  if (!cfg.skydropxOriginName || !cfg.skydropxOriginStreet || !cfg.skydropxOriginCity) {
+    throw new Error('Falta configurar la dirección de origen de tus envíos en Configuración → Skydropx.');
+  }
+
+  // Si el producto de este pedido ya está vinculado a un producto de
+  // Skydropx, se jalan sus medidas reales — si no, se usan las de respaldo
+  // configuradas a mano.
+  const catalogProduct = findProductByQuery(order.product);
+  const skydropxDims = await getSkydropxProductDimensions(cfg, catalogProduct?.skydropxProductId);
+
+  // ---- Paso 1: cotizar ----
+  const quotationBody = {
+    quotation: {
+      address_from: {
+        country_code: 'CO',
+        postal_code: cfg.skydropxOriginPostalCode || '',
+        area_level1: cfg.skydropxOriginState || '',
+        area_level2: cfg.skydropxOriginCity || '',
+        street1: cfg.skydropxOriginStreet,
+        name: cfg.skydropxOriginName,
+        company: cfg.companyName || '',
+        phone: cfg.skydropxOriginPhone || '',
+        email: cfg.skydropxOriginEmail || '',
+        reference: cfg.skydropxOriginReference || 'Sin referencia',
+      },
+      address_to: {
+        country_code: 'CO',
+        postal_code: order.postalCode || '',
+        area_level1: order.department || '',
+        area_level2: order.city || '',
+        street1: order.address || order.city || '',
+        name: order.clientName || 'Cliente',
+        phone: order.clientPhone || '',
+        email: 'cliente@example.com',
+        reference: order.neighborhood || 'Sin referencia',
+      },
+      parcels: [
+        {
+          weight: skydropxDims?.weight || Number(cfg.skydropxDefaultWeightKg) || 1,
+          length: skydropxDims?.length || Number(cfg.skydropxDefaultLengthCm) || 20,
+          width: skydropxDims?.width || Number(cfg.skydropxDefaultWidthCm) || 20,
+          height: skydropxDims?.height || Number(cfg.skydropxDefaultHeightCm) || 10,
+          quantity: 1,
+          dimension_unit: 'CM',
+          mass_unit: 'KG',
+        },
+      ],
+    },
+  };
+
+  const quotationRes = await skydropxRequest(cfg, '/api/v1/quotations', {
+    method: 'POST',
+    body: JSON.stringify(quotationBody),
+  });
+  const quotationId = quotationRes?.data?.id;
+  if (!quotationId) {
+    throw new Error('Skydropx no devolvió un id de cotización.');
+  }
+
+  // ---- Paso 2: la cotización se completa de a poco — se revisa unas veces, esperando un poco entre cada una ----
+  let quotationData = quotationRes;
+  for (let i = 0; i < 6; i++) {
+    const isCompleted = quotationData?.data?.attributes?.status === 'completed';
+    if (isCompleted) break;
+    await sleep(2000);
+    quotationData = await skydropxRequest(cfg, `/api/v1/quotations/${quotationId}`);
+  }
+
+  const rates = (quotationData.included || []).filter((item) => item.type === 'rate' && item.attributes?.success);
+  if (rates.length === 0) {
+    throw new Error('Skydropx no encontró ninguna tarifa disponible para esta dirección.');
+  }
+
+  // REGLA DE NEGOCIO: a oficina, SIEMPRE Interrápidísimo (sin importar el
+  // precio) — a domicilio, la tarifa más barata entre todas las que sirvieron.
+  let bestRate;
+  if (order.deliveryType === 'oficina') {
+    bestRate = rates.find((r) => (r.attributes.provider_name || '').toLowerCase().includes('interrapidisimo'));
+    if (!bestRate) {
+      throw new Error('Este pedido es para recogida en oficina, pero Skydropx no ofreció ninguna tarifa de Interrápidísimo para esta dirección.');
+    }
+  } else {
+    bestRate = rates.reduce((a, b) => (Number(a.attributes.total) <= Number(b.attributes.total) ? a : b));
+  }
+
+  // ---- Paso 3: crear el envío con la tarifa elegida ----
+  const shipmentRes = await skydropxRequest(cfg, '/api/v1/shipments', {
+    method: 'POST',
+    body: JSON.stringify({ quotation_id: quotationId, rate_id: bestRate.id }),
+  });
+  const shipmentId = shipmentRes?.data?.id;
+  if (!shipmentId) {
+    throw new Error('Skydropx no devolvió un id de envío.');
+  }
+
+  await markOrderConfirmedAndNotify(order.id, {
+    skydropxShipmentId: shipmentId,
+    transportadora: bestRate.attributes.provider_display_name || bestRate.attributes.provider_name || '',
+  });
+  return shipmentRes.data;
 }
 
 // Si el interruptor de subida automática está encendido, se llama sola apenas
@@ -2229,6 +2451,7 @@ async function sendVoiceReply(userId, text) {
     // archivo pero no lo puede reproducir ("no se pudo descargar el audio").
     await convertMp3ToOggOpus(mp3Path, oggPath);
     const oggBuffer = fs.readFileSync(oggPath);
+    assertValidAudioFile(oggPath);
     const seconds = await getAudioDurationSeconds(oggPath);
     // ptt: true hace que llegue como nota de voz (con el ícono de
     // micrófono), no como un archivo de audio adjunto normal. "seconds"
