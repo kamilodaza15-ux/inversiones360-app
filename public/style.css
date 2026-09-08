@@ -47,10 +47,17 @@ body {
 }
 
 /* ---------- Layout general: barra lateral + contenido ---------- */
-.app-shell {
-  display: flex;
+#mainApp {
+  flex-direction: column;
   height: 100vh;
   height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -182,7 +189,7 @@ body {
   padding: 20px;
 }
 .main-scroll.no-scroll { overflow: hidden; padding: 0; display: flex; }
-.main-scroll .inner-narrow { max-width: 780px; margin: 0 auto; }
+.main-scroll .inner-narrow { max-width: 1100px; margin: 0 auto; }
 
 .badge {
   padding: 7px 14px;
@@ -742,6 +749,41 @@ input:focus, select:focus, textarea:focus {
 }
 .followup-row .followup-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .followup-row .followup-delay { width: 90px; }
+
+/* ---------- Configuración en acordeón (JS arma la estructura, esto solo la viste) ---------- */
+.collapsible-card .card-accordion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+.collapsible-card .card-accordion-chevron {
+  transition: transform 0.15s ease;
+  color: var(--text-hint);
+  flex-shrink: 0;
+}
+.collapsible-card.open .card-accordion-chevron { transform: rotate(180deg); }
+.collapsible-card .card-accordion-body { display: none; margin-top: 14px; }
+.collapsible-card.open .card-accordion-body { display: block; }
+.collapsible-card #cfg-baseInstructions { min-height: 420px; }
+
+/* ---------- Tarjeta flotante de bienvenida (no bloquea la pantalla) ---------- */
+.onboarding-card {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 200;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  max-width: 360px;
+}
+@media (max-width: 600px) {
+  .onboarding-card { left: 12px; right: 12px; bottom: 12px; max-width: none; }
+}
 
 
 @media (max-width: 860px) {
