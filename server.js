@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.26.0';
+const CURRENT_VERSION = '1.26.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -786,7 +786,8 @@ app.post('/api/clients/:jid/send-voice-recording', uploadVoiceRecording, async (
     ensureFfmpegConfigured();
     await convertRecordingToOggOpus(inputPath, oggPath);
     const oggBuffer = fs.readFileSync(oggPath);
-    await sendAndTrack(jid, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+    const seconds = await getAudioDurationSeconds(oggPath);
+    await sendAndTrack(jid, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds });
 
     ensureClientRecord(jid);
     appendChatLog(jid, {
@@ -992,9 +993,20 @@ app.post('/api/orders', (req, res) => {
   res.json(order);
 });
 
-app.put('/api/orders/:id', (req, res) => {
+app.put('/api/orders/:id', async (req, res) => {
+  const existingOrder = orders.find((o) => o.id === req.params.id);
+  const wasPending = existingOrder?.status === 'pendiente';
   const order = updateOrder(req.params.id, req.body);
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+  // Si el cambio de estado (manual, desde el panel) sacó el pedido de
+  // "Pendiente" hacia cualquier otro estado que no sea "Cancelado", se manda
+  // el comprobante — antes esto solo pasaba si se subía a Dropi/Skydropx,
+  // pero un cambio de estado manual también cuenta como "ya se confirmó".
+  if (wasPending && order.status !== 'pendiente' && order.status !== 'cancelado') {
+    await sendOrderPdfIfNeeded(order);
+  }
+
   res.json(order);
 });
 
@@ -2182,6 +2194,24 @@ function prepareTextForSpeech(text) {
     .replace(/\bCOP\b/gi, ''); // evita que quede "...pesos COP" repetido
 }
 
+// Baileys, en algunos casos, no logra calcular solo la duración del audio
+// (el campo "seconds") — y confirmamos que esto es justo lo que hace que
+// WhatsApp en Android rechace la nota de voz con "no se pudo descargar el
+// audio" (es un bug documentado del propio Baileys, no algo que dependa de
+// cómo convertimos el archivo). La solución real es calcular la duración
+// nosotros mismos y mandársela explícita, en vez de dejar que él adivine.
+function getAudioDurationSeconds(filePath) {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err || !metadata?.format?.duration) {
+        resolve(1); // mejor un valor de respaldo que dejar el campo vacío
+        return;
+      }
+      resolve(Math.max(1, Math.round(metadata.format.duration)));
+    });
+  });
+}
+
 async function sendVoiceReply(userId, text) {
   const cfg = readConfig();
   const speechText = prepareTextForSpeech(text);
@@ -2199,9 +2229,11 @@ async function sendVoiceReply(userId, text) {
     // archivo pero no lo puede reproducir ("no se pudo descargar el audio").
     await convertMp3ToOggOpus(mp3Path, oggPath);
     const oggBuffer = fs.readFileSync(oggPath);
+    const seconds = await getAudioDurationSeconds(oggPath);
     // ptt: true hace que llegue como nota de voz (con el ícono de
-    // micrófono), no como un archivo de audio adjunto normal.
-    await sendAndTrack(userId, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+    // micrófono), no como un archivo de audio adjunto normal. "seconds"
+    // explícito es la parte que corrige el bug de Android.
+    await sendAndTrack(userId, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true, seconds });
     return oggFilename;
   } finally {
     fs.unlink(mp3Path, () => {});
