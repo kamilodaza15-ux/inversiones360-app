@@ -134,6 +134,40 @@
             </label>
             <p class="hint small">Son las mismas credenciales con las que entras a dropi.co. Se guardan solo en tu computador, nunca se comparten.</p>
 
+            <label style="margin-top:16px">Client ID de Skydropx</label>
+            <input id="cfg-skydropxClientId" type="text" placeholder="Pégalo aquí" />
+            <label>Client Secret de Skydropx</label>
+            <input id="cfg-skydropxClientSecret" type="password" placeholder="••••••••" />
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+              <input id="cfg-skydropxUseTestEnv" type="checkbox" style="width:auto" />
+              Usar ambiente de pruebas (sandbox) de Skydropx
+            </label>
+            <p class="hint small">Las credenciales se sacan en Skydropx → Conexiones → API. Se guardan solo en tu computador, nunca se comparten.</p>
+
+            <label style="margin-top:12px">Dirección de origen de tus envíos (bodega/oficina)</label>
+            <input id="cfg-skydropxOriginName" type="text" placeholder="Nombre de quien envía" />
+            <input id="cfg-skydropxOriginStreet" type="text" placeholder="Calle/carrera y número" style="margin-top:8px" />
+            <div class="price-row" style="margin-top:8px">
+              <input id="cfg-skydropxOriginCity" type="text" placeholder="Ciudad" />
+              <input id="cfg-skydropxOriginState" type="text" placeholder="Departamento" />
+            </div>
+            <div class="price-row" style="margin-top:8px">
+              <input id="cfg-skydropxOriginPostalCode" type="text" placeholder="Código postal" />
+              <input id="cfg-skydropxOriginPhone" type="text" placeholder="Teléfono" />
+            </div>
+            <input id="cfg-skydropxOriginEmail" type="text" placeholder="Correo de contacto" style="margin-top:8px" />
+            <input id="cfg-skydropxOriginReference" type="text" placeholder="Referencia (ej. Local 5, cerca al parque)" style="margin-top:8px" />
+
+            <label style="margin-top:12px">Medidas por defecto del paquete (ajústalas a lo que sueles enviar)</label>
+            <div class="price-row">
+              <input id="cfg-skydropxDefaultWeightKg" type="number" step="0.1" placeholder="Peso (kg)" />
+              <input id="cfg-skydropxDefaultLengthCm" type="number" placeholder="Largo (cm)" />
+            </div>
+            <div class="price-row" style="margin-top:8px">
+              <input id="cfg-skydropxDefaultWidthCm" type="number" placeholder="Ancho (cm)" />
+              <input id="cfg-skydropxDefaultHeightCm" type="number" placeholder="Alto (cm)" />
+            </div>
+
             <button id="saveConfigBtn" class="save-btn">Guardar configuración</button>
             <span id="configSaved" class="saved-msg"></span>
           </div>
@@ -312,6 +346,10 @@
               </div>
               <p class="hint small">Busca por nombre en tu catálogo de Dropi y haz clic en el resultado correcto para llenar el ID automático.</p>
               <div id="dropiSearchResults" style="display:none;margin-top:8px;max-height:220px;overflow-y:auto;border:1px solid var(--border-color);border-radius:10px;padding:8px"></div>
+
+              <label>ID de producto en Skydropx (opcional)</label>
+              <input id="p-skydropxProductId" type="text" placeholder="Cópialo desde tu panel de Skydropx" />
+              <p class="hint small">Si lo dejas vacío, se usan las medidas por defecto configuradas en Configuración → Skydropx.</p>
 
               <label>Ofertas por cantidad (opcional — ej. "lleva 2 y ahorra")</label>
               <div id="quantityOffersList"></div>
