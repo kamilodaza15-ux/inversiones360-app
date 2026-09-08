@@ -1,6 +1,6 @@
 {
-  "version": "1.27.5",
-  "notes": "Solo corrige que el botón de actualizar instale automático el paquete @ffprobe-installer/ffprobe que faltaba (necesario para que la duración del audio de las notas de voz se calcule bien) — sin este paquete, el arreglo del audio de la versión anterior no llegó a funcionar de verdad en tu PC.",
+  "version": "1.27.6",
+  "notes": "Causa REAL del audio encontrada revisando un archivo real que falló: MiniMax mete una etiqueta gigante (más de 1.200 caracteres, un sello regulatorio chino con firmas digitales) dentro del audio, y esa etiqueta se copiaba tal cual al archivo final que se le mandaba a WhatsApp — muy probablemente lo que hacía que WhatsApp lo rechazara como 'dañado'. Se agrega '-map_metadata -1' para borrar toda esa metadata antes de enviar. Probado directamente contra un archivo real que había fallado, confirmado que limpia la etiqueta por completo.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
