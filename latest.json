@@ -1,6 +1,6 @@
 {
-  "version": "1.27.3",
-  "notes": "Reorganización visual: nueva sección 'Integraciones' en Configuración agrupando IA/Voz/Dropi/Skydropx con colores propios, y en Productos la lista aparece primero con el formulario de agregar colapsado. Sin cambios de lógica, solo de organización visual.",
+  "version": "1.27.5",
+  "notes": "Solo corrige que el botón de actualizar instale automático el paquete @ffprobe-installer/ffprobe que faltaba (necesario para que la duración del audio de las notas de voz se calcule bien) — sin este paquete, el arreglo del audio de la versión anterior no llegó a funcionar de verdad en tu PC.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
@@ -9,5 +9,6 @@
     "public/index.html": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/index.html",
     "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js",
     "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
-  }
+  },
+  "newDependencies": ["@ffprobe-installer/ffprobe"]
 }
