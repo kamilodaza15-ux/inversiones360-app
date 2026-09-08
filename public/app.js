@@ -1837,7 +1837,7 @@ function resetProductForm() {
   document.getElementById('p-id').value = '';
   document.getElementById('p-video-current').textContent = '';
   cancelEditBtn.style.display = 'none';
-  formTitle.textContent = 'Agregar producto';
+  formTitle.textContent = '➕ Agregar producto';
   quantityOffersState = [];
   renderQuantityOffers();
 }
@@ -1952,10 +1952,20 @@ async function loadProducts() {
     btn.addEventListener('click', () => openMediaBank(btn.dataset.media));
   });
 
+// Abre la tarjeta colapsable de "Agregar/Editar producto" (por si estaba cerrada).
+function openProductFormCard() {
+  const card = document.getElementById('productFormCard');
+  if (!card.classList.contains('open')) {
+    card.querySelector('.card-accordion-header')?.click();
+  }
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
   list.querySelectorAll('[data-edit]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const products = await fetch('/api/products').then((r) => r.json());
       const p = products.find((x) => x.id === btn.dataset.edit);
+      openProductFormCard();
       document.getElementById('p-id').value = p.id;
       document.getElementById('p-name').value = p.name;
       document.getElementById('p-priceBefore').value = p.priceBefore || '';
