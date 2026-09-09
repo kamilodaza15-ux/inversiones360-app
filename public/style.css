@@ -964,3 +964,15 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#8b5cf6!import
 @media (max-width: 860px) {
   .floating-go-order-btn { right: 12px; bottom: 12px; }
 }
+
+/* Skydropx: tarifas seleccionables */
+.skydropx-rate-row {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.skydropx-rate-row:hover { filter: brightness(0.98); }
+.skydropx-rate-row.selected { outline: 2px solid #16a34a; }
