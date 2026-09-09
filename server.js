@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.31.5';
+const CURRENT_VERSION = '1.31.7';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1722,6 +1722,8 @@ async function uploadOrderToSkydropx(order) {
           height: skydropxDims?.height || Number(cfg.skydropxDefaultHeightCm) || 10,
           quantity: 1,
           declared_amount: declaredAmount,
+          package_content: String(order.product || catalogProduct?.name || 'Producto').slice(0, 200),
+          package_type: 'package',
           dimension_unit: 'CM',
           mass_unit: 'KG',
         },
@@ -1762,17 +1764,40 @@ async function uploadOrderToSkydropx(order) {
   // precio) — a domicilio, la tarifa más barata entre todas las que sirvieron.
   let bestRate;
   if (order.deliveryType === 'oficina') {
-    bestRate = rates.find((r) => String(r.provider_name || r.attributes?.provider_name || '').toLowerCase().includes('interrapidisimo'));
+    const carrierText = (r) => [
+      r?.provider_name, r?.carrier_name, r?.provider_display_name, r?.attributes?.provider_name,
+      r?.attributes?.carrier_name, r?.attributes?.provider_display_name
+    ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    bestRate = rates.find((r) => {
+      const name = carrierText(r);
+      return name.includes('interrapidisimo') || name.includes('inter rapidisimo');
+    });
     if (!bestRate) {
-      throw new Error('Este pedido es para recogida en oficina, pero Skydropx no ofreció ninguna tarifa de Interrápidísimo para esta dirección.');
+      const carriers = [...new Set(rates.map((r) => carrierText(r)).filter(Boolean))].slice(0, 8);
+      throw new Error('Este pedido es para recogida en oficina, pero Skydropx no ofreció ninguna tarifa de Interrápidísimo para esta dirección. Tarifas recibidas: ' + (carriers.join(' | ') || 'ninguna'));
     }
   } else {
     bestRate = rates.reduce((a, b) => (Number(a.total ?? a.attributes?.total) <= Number(b.total ?? b.attributes?.total) ? a : b));
   }
 
   // ---- Paso 3: crear el envío con la tarifa elegida ----
-  const rateId = bestRate.id;
+  const rateId = bestRate.id || bestRate.rate_id || bestRate.attributes?.id;
   if (!rateId) throw new Error('Skydropx no devolvió un rate_id válido.');
+
+  let officeDeliveryPointId = '';
+  if (order.deliveryType === 'oficina') {
+    const officeRes = await skydropxRequest(cfg, `/api/v1/office_points?rate_id=${encodeURIComponent(rateId)}&direction=delivery&limit=15`);
+    const officeCandidates = Array.isArray(officeRes?.data) ? officeRes.data : (Array.isArray(officeRes?.office_points) ? officeRes.office_points : (Array.isArray(officeRes?.included) ? officeRes.included : []));
+    const points = officeCandidates.map((p) => ({
+      id: p?.id || p?.attributes?.id,
+      name: p?.attributes?.name || p?.name || '',
+      carrier: p?.attributes?.carrier_name || p?.carrier_name || ''
+    })).filter((p) => p.id);
+    if (!points.length) {
+      throw new Error('Skydropx encontró la tarifa de Interrápidísimo, pero no devolvió puntos de oficina disponibles para esta dirección.');
+    }
+    officeDeliveryPointId = points[0].id;
+  }
 
   const shipmentBody = {
     shipment: {
@@ -1806,13 +1831,16 @@ async function uploadOrderToSkydropx(order) {
         package_number: '1',
         package_protected: false,
         declared_value: declaredAmount,
+        package_content: String(order.product || catalogProduct?.name || 'Producto').slice(0, 200),
+        package_type: 'package',
       }],
     },
   };
 
   if (cfg.skydropxUseTestEnv) shipmentBody.shipment.auto_advance = true;
   if (order.deliveryType === 'oficina') {
-    throw new Error('El pedido es para oficina. Primero debemos seleccionar el punto de oficina de Skydropx para crear la guía.');
+    shipmentBody.shipment.office_delivery = true;
+    shipmentBody.shipment.office_delivery_point_id = officeDeliveryPointId;
   }
 
   const shipmentRes = await skydropxRequest(cfg, '/api/v1/shipments/', {
@@ -4099,8 +4127,18 @@ async function startBot() {
       );
 
       const buttonResponse = msg.message?.buttonsResponseMessage || msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage || null;
-      const selectedButtonId = buttonResponse?.selectedButtonId || '';
-      const selectedButtonText = buttonResponse?.selectedDisplayText || '';
+      let selectedButtonId = buttonResponse?.selectedButtonId || '';
+      let selectedButtonText = buttonResponse?.selectedDisplayText || '';
+      // Native Flow devuelve la selección dentro de paramsJson.
+      if (!selectedButtonId && buttonResponse?.paramsJson) {
+        try {
+          const params = JSON.parse(buttonResponse.paramsJson);
+          selectedButtonId = params.id || params.selected_id || params.row_id || '';
+          selectedButtonText = params.display_text || params.selected_display_text || params.title || '';
+        } catch (_) {}
+      }
+      if (!selectedButtonId && buttonResponse?.selectedId) selectedButtonId = buttonResponse.selectedId;
+      if (!selectedButtonText && buttonResponse?.selectedDisplayText) selectedButtonText = buttonResponse.selectedDisplayText;
       let buttonAutoResponse = '';
       if (selectedButtonId) {
         const pending = ensureClientRecord(userId) && clients.get(userId)?.pendingInteractiveButtons?.[selectedButtonId];
@@ -4299,19 +4337,26 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
             pending[nativeButtons[n].buttonId] = { productId: product.id, stepId: step.id, text: b.text, response: b.response || '' };
           });
           client.pendingInteractiveButtons = { ...(client.pendingInteractiveButtons || {}), ...pending };
-          // Baileys soporta este formato en cuentas donde WhatsApp mantiene
-          // habilitados los mensajes interactivos clásicos. Si la cuenta no lo
-          // acepta, caemos a texto como respaldo para no romper la conversación.
+          // Usamos Native Flow / interactiveButtons. El formato clásico `buttons`
+          // puede llegar en blanco en WhatsApp Web/Desktop con versiones recientes
+          // de Baileys. Native Flow usa quick_reply y devuelve el id seleccionado.
           try {
+            const interactiveButtons = nativeButtons.map((b) => ({
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                display_text: b.buttonText.displayText,
+                id: b.buttonId,
+              }),
+            }));
             await sendAndTrack(userId, {
-              text: '',
-              buttons: nativeButtons,
-              headerType: 1,
+              text: text || 'Selecciona una opción:',
+              footer: 'Inversiones 360',
+              interactiveButtons,
             });
-            appendChatLog(userId, { from: 'bot', text: buttons.map((b) => `• ${b.text}`).join('\n'), type: 'buttons', timestamp: Date.now() });
+            appendChatLog(userId, { from: 'bot', text: (text ? text + '\n' : '') + buttons.map((b) => `🔘 ${b.text}`).join('\n'), type: 'buttons', timestamp: Date.now() });
           } catch (buttonErr) {
-            console.warn('Botones interactivos no disponibles; usando respaldo de texto:', buttonErr.message);
-            const optionsText = buttons.map((b) => `• ${b.text}`).join('\n');
+            console.warn('Native Flow no disponible; usando respaldo de texto:', buttonErr.message);
+            const optionsText = (text ? text + '\n\n' : '') + buttons.map((b) => `• ${b.text}`).join('\n');
             await sendAndTrack(userId, { text: optionsText });
             appendChatLog(userId, { from: 'bot', text: optionsText, type: 'text', timestamp: Date.now() });
           }
