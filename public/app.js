@@ -889,7 +889,10 @@ async function selectClient(jid) {
   renderClientList();
 
   const client = clientsCache.find((c) => c.jid === jid);
-  document.getElementById('chatHeader').innerHTML = `<b>${client?.name || client?.phone || jid.split('@')[0]}</b>`;
+  const chatLabel = client?.name || client?.phone || jid.split('@')[0];
+  const latestOrder = getClientLatestOrder(jid);
+  document.getElementById('chatHeader').innerHTML = `<div class="chat-header-main"><b>${escapeHtml(chatLabel)}</b>${latestOrder ? `<button type="button" id="chatGoToOrderBtn" class="chat-go-order-btn" title="Ir al pedido ${escapeHtml(latestOrder.id)}">🛒 Ir al pedido</button>` : ''}</div>`;
+  document.getElementById('chatGoToOrderBtn')?.addEventListener('click', goToOrderFromChat);
 
   document.getElementById('chatsRightPanel').style.display = 'flex';
   renderRightPanel(client);
@@ -909,7 +912,7 @@ function updateFloatingOrderButton() {
   const btn = document.getElementById('floatingGoToOrderBtn');
   if (!btn) return;
   const order = getClientLatestOrder(selectedClientJid);
-  btn.style.display = order ? 'flex' : 'none';
+  btn.style.display = 'none';
   if (order) {
     btn.dataset.orderId = order.id;
     btn.title = `Ir al pedido ${order.id}`;
