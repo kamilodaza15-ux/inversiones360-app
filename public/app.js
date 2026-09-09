@@ -1975,7 +1975,7 @@ function renderFirstContactSequence() {
   }
   container.innerHTML = firstContactSequenceState.map((step, index) => {
     const mediaPreview = step.mediaUrl ? `<div class="sequence-media-current"><span>📎 Material guardado</span><small>${escapeHtml(step.mediaUrl.split('/').pop())}</small></div>` : '';
-    const buttonFields = step.type === 'buttons' ? `<div class="sequence-buttons-fields">${[0,1,2].map(i => `<input class="fc-button-input" data-index="${index}" data-button="${i}" value="${escapeHtml(step.buttons?.[i] || '')}" placeholder="Respuesta ${i+1} (opcional)" />`).join('')}</div>` : '';
+    const buttonFields = step.type === 'buttons' ? `<div class="sequence-buttons-fields">${[0,1,2].map(i => { const b = typeof step.buttons?.[i] === 'object' ? step.buttons[i] : { text: step.buttons?.[i] || '', response: '' }; return `<div class="fc-button-config"><div class="fc-button-row"><span class="fc-button-icon">🔘</span><input class="fc-button-input" data-index="${index}" data-button="${i}" value="${escapeHtml(b.text || '')}" placeholder="Texto del botón ${i+1}" /></div><textarea class="fc-button-response" data-index="${index}" data-button="${i}" rows="2" placeholder="Respuesta automática al seleccionar este botón...">${escapeHtml(b.response || '')}</textarea></div>`; }).join('')}</div>` : '';
     const textField = (step.type === 'text' || step.type === 'question' || step.type === 'buttons') ? `<textarea class="fc-text-input" data-index="${index}" rows="${step.type === 'text' ? 4 : 3}" placeholder="${step.type === 'question' ? 'Escribe la pregunta que verá el cliente...' : 'Escribe el mensaje...'}">${escapeHtml(step.text)}</textarea>` : '';
     const fileField = ['image','video','audio'].includes(step.type) ? `<input class="fc-media-input" data-index="${index}" type="file" accept="${step.type === 'image' ? 'image/*' : step.type === 'video' ? 'video/*' : 'audio/*'}" />${mediaPreview}` : '';
     return `<div class="sequence-step" data-step-index="${index}">
@@ -1990,7 +1990,17 @@ function renderFirstContactSequence() {
   container.querySelectorAll('.fc-text-input').forEach(el => el.addEventListener('input', () => { firstContactSequenceState[Number(el.dataset.index)].text = el.value; }));
   container.querySelectorAll('.fc-button-input').forEach(el => el.addEventListener('input', () => {
     const step = firstContactSequenceState[Number(el.dataset.index)];
-    step.buttons = step.buttons || []; step.buttons[Number(el.dataset.button)] = el.value;
+    step.buttons = step.buttons || [];
+    const i = Number(el.dataset.button);
+    const current = typeof step.buttons[i] === 'object' ? step.buttons[i] : { text: step.buttons[i] || '', response: '' };
+    step.buttons[i] = { id: current.id || `b${i + 1}`, text: el.value, response: current.response || '' };
+  }));
+  container.querySelectorAll('.fc-button-response').forEach(el => el.addEventListener('input', () => {
+    const step = firstContactSequenceState[Number(el.dataset.index)];
+    step.buttons = step.buttons || [];
+    const i = Number(el.dataset.button);
+    const current = typeof step.buttons[i] === 'object' ? step.buttons[i] : { text: step.buttons[i] || '', response: '' };
+    step.buttons[i] = { id: current.id || `b${i + 1}`, text: current.text || '', response: el.value };
   }));
   container.querySelectorAll('.fc-delay-input').forEach(el => el.addEventListener('input', () => { firstContactSequenceState[Number(el.dataset.index)].delaySeconds = Math.max(0, Math.min(120, Number(el.value) || 0)); }));
   container.querySelectorAll('.fc-media-input').forEach(el => el.addEventListener('change', () => { firstContactSequenceState[Number(el.dataset.index)]._file = el.files[0] || null; }));
@@ -2003,7 +2013,7 @@ function serializeFirstContactSequence(formData) {
   const sequence = [];
   let mediaIndex = 0;
   for (const step of firstContactSequenceState) {
-    const clean = { id: step.id, type: step.type, text: step.text || '', mediaUrl: step.mediaUrl || '', delaySeconds: Math.max(0, Number(step.delaySeconds) || 0), buttons: (step.buttons || []).map(x => String(x || '').trim()).filter(Boolean).slice(0,3) };
+    const clean = { id: step.id, type: step.type, text: step.text || '', mediaUrl: step.mediaUrl || '', delaySeconds: Math.max(0, Number(step.delaySeconds) || 0), buttons: (step.buttons || []).map((x, i) => typeof x === 'object' ? { id: String(x.id || `b${i + 1}`), text: String(x.text || '').trim(), response: String(x.response || '').trim() } : { id: `b${i + 1}`, text: String(x || '').trim(), response: '' }).filter(x => x.text).slice(0,3) };
     if (step._file) {
       clean.mediaIndex = mediaIndex++;
       formData.append('firstContactMedia', step._file);
@@ -2106,7 +2116,7 @@ function openProductFormCard() {
       updateProductSellerModeUI();
       document.getElementById('p-firstContactEnabled').checked = p.firstContactEnabled === true;
       document.getElementById('p-firstContactMessage').value = p.firstContactMessage || '';
-      firstContactSequenceState = Array.isArray(p.firstContactSequence) ? p.firstContactSequence.map(step => ({ ...step, buttons: Array.isArray(step.buttons) ? [...step.buttons] : [], _file: null })) : [];
+      firstContactSequenceState = Array.isArray(p.firstContactSequence) ? p.firstContactSequence.map(step => ({ ...step, buttons: Array.isArray(step.buttons) ? step.buttons.map((b, i) => typeof b === 'object' ? { id: b.id || `b${i + 1}`, text: b.text || b.label || '', response: b.response || '' } : { id: `b${i + 1}`, text: b || '', response: '' }) : [], _file: null })) : [];
       renderFirstContactSequence();
       updateFirstContactUI();
       document.getElementById('p-video-current').textContent = p.video
