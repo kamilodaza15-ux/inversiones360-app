@@ -295,6 +295,8 @@
               Usar ambiente de pruebas de Dropi (para probar sin arriesgar pedidos reales)
             </label>
             <p class="hint small">Son las mismas credenciales con las que entras a dropi.co. Se guardan solo en tu computador, nunca se comparten.</p>
+            <button id="testDropiConnectionBtn" class="cancel-btn" style="margin-top:10px">🔌 Probar conexión con Dropi</button>
+            <p id="dropiConnectionStatus" class="hint small" style="margin-top:8px"></p>
           </div>
 
           <div class="card collapsible-card integration-card-skydropx">
@@ -733,67 +735,93 @@
 
       <!-- Detalle de pedido -->
       <div id="orderDetailOverlay" class="modal-overlay" style="display:none">
-        <div class="modal-box order-detail-modal">
+        <div class="modal-box order-detail-modal order-detail-pro">
           <div class="order-detail-header">
-            <div>
-              <h2 id="orderDetailTitle" style="margin:0">Pedido</h2>
-              <span class="order-detail-subtitle">Datos del pedido y cotización</span>
+            <div class="order-detail-title-wrap">
+              <button id="closeOrderDetailBtn" class="order-back-btn" type="button" title="Cerrar">←</button>
+              <div>
+                <div class="order-detail-kicker">PEDIDO</div>
+                <h2 id="orderDetailTitle" style="margin:0">Pedido</h2>
+                <span class="order-detail-subtitle">Detalle, seguimiento, cliente y logística</span>
+              </div>
             </div>
             <div class="order-detail-header-actions">
-              <button id="goToOrderChatBtn" class="cancel-btn order-nav-btn" style="margin-top:0">💬 Ir al chat</button>
-            <button id="closeOrderDetailBtn" class="cancel-btn" style="margin-top:0">✕</button>
+              <button id="goToOrderChatBtn" class="order-chat-nav-btn" style="margin-top:0">💬 Ir al chat</button>
             </div>
           </div>
-          <label>Nombre del cliente</label>
-          <input id="od-clientName" type="text" />
-          <label>Teléfono</label>
-          <input id="od-clientPhone" type="text" />
-          <label>Producto</label>
-          <select id="od-product">
-            <option value="">Elegir producto...</option>
-          </select>
-          <div class="price-row">
-            <div><label>Cantidad</label><input id="od-quantity" type="number" min="1" /></div>
-            <div><label>Precio</label><input id="od-price" type="text" /></div>
-          </div>
-          <label>Tipo de entrega</label>
-          <select id="od-deliveryType">
-            <option value="domicilio">Domicilio</option>
-            <option value="oficina">Recogida en oficina</option>
-          </select>
-          <label>Dirección</label>
-          <input id="od-address" type="text" />
-          <div class="price-row">
-            <div>
-              <label>Departamento</label>
-              <select id="od-department"><option value="">Elegir...</option></select>
-            </div>
-            <div>
-              <label>Ciudad</label>
-              <select id="od-city"><option value="">Elegir departamento primero</option></select>
-            </div>
-          </div>
-          <label>Barrio (opcional)</label>
-          <input id="od-neighborhood" type="text" />
-          <label>Transportadora</label>
-          <input id="od-transportadora" type="text" placeholder="Se llena sola al generar la guía en Dropi" />
-          <label>Número de guía</label>
-          <input id="od-guideNumber" type="text" placeholder="Se llena sola al generar la guía en Dropi" />
-          <label>Estado</label>
-          <select id="od-status"></select>
 
-          <button id="saveOrderBtn" class="save-btn">Guardar cambios</button>
-          <button id="downloadPdfBtn" class="cancel-btn">📄 Descargar comprobante PDF</button>
-          <button id="deleteOrderBtn" class="cancel-btn" style="color:#dc2626">🗑️ Eliminar pedido</button>
+          <div class="order-detail-grid">
+            <main class="order-detail-main-col">
+              <section class="order-detail-card order-products-card">
+                <div class="order-card-title"><span>🛍️ Productos</span><span class="order-card-pill">Pedido</span></div>
+                <div class="order-product-grid order-product-grid-head"><span>Producto</span><span>Cant.</span><span>Precio total</span></div>
+                <div class="order-product-grid order-product-grid-body">
+                  <select id="od-product"><option value="">Elegir producto...</option></select>
+                  <input id="od-quantity" type="number" min="1" />
+                  <input id="od-price" type="text" />
+                </div>
+                <div class="order-total-box">
+                  <span>Total del pedido</span><strong id="od-totalPreview">$0</strong>
+                </div>
+              </section>
 
-          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color)">
-            <button id="uploadDropiBtn" class="save-btn" style="margin-top:0">🚀 Subir a Dropi</button>
-            <button id="generateGuideDropiBtn" class="cancel-btn">📦 Generar guía en Dropi</button>
-            <button id="refreshStatusDropiBtn" class="cancel-btn">🔄 Actualizar estado (Dropi)</button>
-            <button id="quoteSkydropxBtn" class="cancel-btn">💰 Cotizar flete Skydropx</button>
-            <button id="uploadSkydropxBtn" class="cancel-btn">🚀 Subir a Skydropx</button>
-            <p id="uploadStatus" class="hint small" style="margin-top:8px"></p>
-            <div id="skydropxQuoteBox" class="skydropx-quote-box" style="display:none"></div>
+              <section class="order-detail-card">
+                <div class="order-card-title"><span>📍 Datos de entrega</span></div>
+                <div class="order-form-grid two">
+                  <div><label>Tipo de entrega</label><select id="od-deliveryType"><option value="domicilio">Domicilio</option><option value="oficina">Recogida en oficina</option></select></div>
+                  <div><label>Barrio</label><input id="od-neighborhood" type="text" /></div>
+                  <div class="full"><label>Dirección</label><input id="od-address" type="text" /></div>
+                  <div><label>Departamento</label><select id="od-department"><option value="">Elegir...</option></select></div>
+                  <div><label>Ciudad</label><select id="od-city"><option value="">Elegir departamento primero</option></select></div>
+                </div>
+              </section>
+
+              <section class="order-detail-card">
+                <div class="order-card-title"><span>📦 Seguimiento</span></div>
+                <div id="od-statusTimeline" class="order-timeline"></div>
+                <div class="order-form-grid two order-followup-fields">
+                  <div><label>Estado</label><select id="od-status"></select></div>
+                  <div><label>Transportadora</label><input id="od-transportadora" type="text" placeholder="Transportadora" /></div>
+                  <div><label>Número de guía</label><input id="od-guideNumber" type="text" placeholder="Número de guía" /></div>
+                  <div><label>Notas internas</label><input id="od-notes" type="text" placeholder="Nota del pedido" /></div>
+                </div>
+              </section>
+
+              <section class="order-detail-card">
+                <div class="order-card-title"><span>📝 Acciones</span></div>
+                <div class="order-action-row">
+                  <button id="saveOrderBtn" class="save-btn">💾 Guardar cambios</button>
+                  <button id="downloadPdfBtn" class="cancel-btn">📄 PDF</button>
+                  <button id="deleteOrderBtn" class="cancel-btn danger-btn">🗑️ Eliminar</button>
+                </div>
+              </section>
+            </main>
+
+            <aside class="order-detail-side-col">
+              <section class="order-detail-card client-card">
+                <div class="order-card-title"><span>👤 Cliente</span></div>
+                <label>Nombre</label><input id="od-clientName" type="text" />
+                <label>Teléfono</label><input id="od-clientPhone" type="text" />
+                <div class="client-whatsapp-note">💬 Datos tomados del pedido y del chat de WhatsApp.</div>
+              </section>
+
+              <section class="order-detail-card dropi-card">
+                <div class="order-card-title"><span>🟣 Dropi</span><span class="order-card-pill purple">Integración</span></div>
+                <div class="order-action-stack">
+                  <button id="uploadDropiBtn" class="save-btn">🚀 Subir a Dropi</button>
+                  <button id="generateGuideDropiBtn" class="cancel-btn">📦 Generar guía</button>
+                  <button id="refreshStatusDropiBtn" class="cancel-btn">🔄 Actualizar estado</button>
+                </div>
+              </section>
+
+              <section class="order-detail-card skydropx-card">
+                <div class="order-card-title"><span>🚚 Skydropx</span><span class="order-card-pill blue">Cotización</span></div>
+                <button id="quoteSkydropxBtn" class="quote-refresh-btn">🔄 Actualizar cotización</button>
+                <p id="uploadStatus" class="hint small order-upload-status"></p>
+                <div id="skydropxQuoteBox" class="skydropx-quote-box" style="display:none"></div>
+                <button id="uploadSkydropxBtn" class="skydropx-upload-main">🚀 Enviar a Skydropx</button>
+              </section>
+            </aside>
           </div>
         </div>
       </div>
