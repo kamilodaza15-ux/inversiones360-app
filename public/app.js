@@ -229,7 +229,7 @@ fetch('/api/network-info')
 
 // ---------- Configuración ----------
 const cfgFields = [
-  'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions', 'firstContactPrompt',
+  'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
   'responseDelaySeconds', 'notificationPhoneNumber', 'pauseDurationMinutes', 'aiProvider', 'groqApiKey',
   'openaiApiKey', 'deepseekApiKey', 'autoUploadProvider', 'dropiEmail', 'dropiPassword',
   'skydropxClientId', 'skydropxClientSecret',
@@ -282,7 +282,6 @@ async function loadConfig() {
   // lo traducimos automáticamente a voiceMode la primera vez que carga.
   document.getElementById('cfg-voiceMode').value = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
   document.getElementById('cfg-confirmOrderDataBeforeClosing').checked = !!cfg.confirmOrderDataBeforeClosing;
-  document.getElementById('cfg-sellerMode').checked = cfg.sellerMode === true || cfg.sellerModeEnabled === true || cfg.modoVendedor === true;
   document.getElementById('cfg-dropiUseTestEnv').checked = !!cfg.dropiUseTestEnv;
   document.getElementById('cfg-skydropxUseTestEnv').checked = !!cfg.skydropxUseTestEnv;
   document.getElementById('cfg-minimaxApiKey').value = cfg.minimaxApiKey || '';
@@ -389,7 +388,6 @@ async function saveMainConfig(savedLabelId) {
   body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
   body.deepseekModel = getModelValue('cfg-deepseekModel', 'cfg-deepseekModel-custom');
   body.confirmOrderDataBeforeClosing = document.getElementById('cfg-confirmOrderDataBeforeClosing').checked;
-  body.sellerMode = document.getElementById('cfg-sellerMode').checked;
   body.dropiUseTestEnv = document.getElementById('cfg-dropiUseTestEnv').checked;
   body.skydropxUseTestEnv = document.getElementById('cfg-skydropxUseTestEnv').checked;
   await fetch('/api/config', {
@@ -1852,6 +1850,14 @@ function resetProductForm() {
   document.getElementById('p-video-current').textContent = '';
   document.getElementById('p-saleMode').value = 'general';
   document.getElementById('p-assistantPrompt').value = '';
+  document.getElementById('p-sellerModeEnabled').checked = false;
+  document.getElementById('p-sellerModeLabel').textContent = 'DESACTIVADO';
+  document.getElementById('p-sellerModeLabel').style.color = '#dc2626';
+  document.getElementById('p-firstContactEnabled').checked = false;
+  document.getElementById('p-firstContactMessage').value = '';
+  document.getElementById('p-firstContactImages').value = '';
+  document.getElementById('p-firstContactCurrent').textContent = 'Las imágenes se envían junto con el mensaje inicial. Solo se dispara una vez por producto y cliente.';
+  document.getElementById('p-customPromptBox').style.display = 'none';
   cancelEditBtn.style.display = 'none';
   formTitle.textContent = '➕ Agregar producto';
   quantityOffersState = [];
@@ -1934,6 +1940,17 @@ document.getElementById('mb-addImageBtn').addEventListener('click', async () => 
   showToast('Imagen agregada.');
 });
 
+function updateProductSellerModeUI() {
+  const enabled = document.getElementById('p-sellerModeEnabled').checked;
+  const label = document.getElementById('p-sellerModeLabel');
+  label.textContent = enabled ? 'ACTIVADO' : 'DESACTIVADO';
+  label.style.color = enabled ? '#16a34a' : '#dc2626';
+  const mode = document.getElementById('p-saleMode').value;
+  document.getElementById('p-customPromptBox').style.display = enabled && mode === 'prompt' ? 'block' : 'none';
+}
+document.getElementById('p-sellerModeEnabled').addEventListener('change', updateProductSellerModeUI);
+document.getElementById('p-saleMode').addEventListener('change', updateProductSellerModeUI);
+
 async function loadProducts() {
   const products = await fetch('/api/products').then((r) => r.json());
   const list = document.getElementById('productList');
@@ -1945,7 +1962,8 @@ async function loadProducts() {
       .map((img) => `<img src="${typeof img === 'string' ? img : img.url}" onerror="this.style.visibility='hidden'" />`)
       .join('');
     const videoBadge = p.video ? '<span class="price-tag after">🎥 Video</span>' : '';
-    const assistantBadge = p.saleMode === 'prompt' && p.assistantPrompt ? '<span class="price-tag after">🎯 Prompt propio</span>' : (p.saleMode === 'general' ? '<span class="price-tag">🛍️ Vendedor</span>' : '');
+    const assistantBadge = p.sellerModeEnabled ? (p.saleMode === 'prompt' && p.assistantPrompt ? '<span class="price-tag after">🟢 Vendedor + prompt</span>' : '<span class="price-tag">🟢 Vendedor</span>') : '<span class="price-tag" style="opacity:.7">⚪ Vendedor OFF</span>';
+    const firstContactBadge = p.firstContactEnabled ? '<span class="price-tag after">👋 Primer contacto</span>' : '';
     const item = document.createElement('div');
     item.className = 'product-item';
     item.innerHTML = `
@@ -1955,6 +1973,7 @@ async function loadProducts() {
         ${priceTagHTML(p)}
         ${videoBadge}
         ${assistantBadge}
+        ${firstContactBadge}
         <div class="kw">${(p.keywords || []).join(', ')}</div>
       </div>
       <div class="actions">
@@ -1996,6 +2015,11 @@ function openProductFormCard() {
       document.getElementById('p-details').value = p.details || '';
       document.getElementById('p-saleMode').value = p.saleMode || 'general';
       document.getElementById('p-assistantPrompt').value = p.assistantPrompt || '';
+      document.getElementById('p-sellerModeEnabled').checked = p.sellerModeEnabled === true;
+      updateProductSellerModeUI();
+      document.getElementById('p-firstContactEnabled').checked = p.firstContactEnabled === true;
+      document.getElementById('p-firstContactMessage').value = p.firstContactMessage || '';
+      document.getElementById('p-firstContactCurrent').textContent = (p.firstContactImages || []).length ? `📷 Tiene ${(p.firstContactImages || []).length} imagen(es) de primer contacto cargada(s). Selecciona nuevos archivos solo si quieres reemplazarlas.` : 'Las imágenes se envían junto con el mensaje inicial. Solo se dispara una vez por producto y cliente.';
       document.getElementById('p-video-current').textContent = p.video
         ? '🎥 Ya tiene un video cargado. Elige otro archivo aquí solo si quieres reemplazarlo.'
         : '';
@@ -2033,6 +2057,11 @@ productForm.addEventListener('submit', async (e) => {
   formData.append('details', document.getElementById('p-details').value);
   formData.append('saleMode', document.getElementById('p-saleMode').value);
   formData.append('assistantPrompt', document.getElementById('p-assistantPrompt').value);
+  formData.append('sellerModeEnabled', document.getElementById('p-sellerModeEnabled').checked ? 'true' : 'false');
+  formData.append('firstContactEnabled', document.getElementById('p-firstContactEnabled').checked ? 'true' : 'false');
+  formData.append('firstContactMessage', document.getElementById('p-firstContactMessage').value);
+  const firstContactFiles = document.getElementById('p-firstContactImages').files;
+  for (let i = 0; i < Math.min(2, firstContactFiles.length); i++) formData.append('firstContactImages', firstContactFiles[i]);
   const imageFiles = document.getElementById('p-images').files;
   for (const file of imageFiles) formData.append('images', file);
   const videoFile = document.getElementById('p-video').files[0];
