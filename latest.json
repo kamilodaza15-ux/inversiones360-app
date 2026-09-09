@@ -1,6 +1,6 @@
 {
-  "version": "1.29.0",
-  "notes": "Incluye corrección Skydropx OAuth, entregas programadas seguras, optimización de tokens, asistente por producto, Modo Vendedor, prompt de Primer contacto y prompt personalizado por producto. Mantiene todos los archivos acumulados.",
+  "version": "1.30.1",
+  "notes": "Asesora comercial informativa por producto: puede mostrar el precio desde el primer mensaje cuando piden información; refuerzo del formato obligatorio antes + descuento; al detectar intención clara de compra pasa a recopilar datos sin preguntar domicilio u oficina; asume domicilio y detecta oficina/transportadora automáticamente; redetección de producto en mensajes de voz; se mantienen Modo Vendedor, Primer contacto, banco de medios, validación de Colombia, programación segura, Skydropx y correcciones anteriores.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
