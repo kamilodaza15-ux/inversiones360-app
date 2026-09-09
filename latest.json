@@ -1,6 +1,6 @@
 {
-  "version": "1.28.1",
-  "notes": "Corrección segura de entregas programadas: una entrega futura no crea la orden al programarse. La orden solo se crea después del recordatorio de 2 días y una confirmación afirmativa clara del cliente. Se conserva la optimización de tokens, el asistente por producto, la selección de herramientas y la corrección de audio de la 1.27.6. Se mantienen todos los archivos de actualización anteriores en el manifiesto.",
+  "version": "1.29.0",
+  "notes": "Incluye corrección Skydropx OAuth, entregas programadas seguras, optimización de tokens, asistente por producto, Modo Vendedor, prompt de Primer contacto y prompt personalizado por producto. Mantiene todos los archivos acumulados.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
@@ -10,5 +10,7 @@
     "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js",
     "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
   },
-  "newDependencies": ["@ffprobe-installer/ffprobe"]
+  "newDependencies": [
+    "@ffprobe-installer/ffprobe"
+  ]
 }
