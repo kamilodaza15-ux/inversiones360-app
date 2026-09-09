@@ -1532,8 +1532,9 @@ async function skydropxLogin(cfg) {
   }
 
   if (!res.ok || !data.access_token) {
-    const detail = data.error_description || data.error || `HTTP ${res.status}`;
-    throw new Error(`Skydropx no autorizó la conexión: ${detail}`);
+    const detail = data.error_description || data.error || text || `HTTP ${res.status}`;
+    const responseType = res.headers.get('content-type') || 'desconocido';
+    throw new Error(`Skydropx no autorizó la conexión (HTTP ${res.status}). Tipo: ${responseType}. Respuesta: ${String(detail).slice(0, 500)}`);
   }
 
   skydropxTokenCache = data.access_token;
