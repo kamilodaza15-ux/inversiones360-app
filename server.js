@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.27.6';
+const CURRENT_VERSION = '1.28.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -770,7 +770,7 @@ app.post('/api/clients/:jid/schedule-delivery', (req, res) => {
   const rec = clients.get(jid);
   if (!rec) return res.status(404).json({ error: 'Cliente no encontrado' });
   if (!req.body.date) return res.status(400).json({ error: 'Falta la fecha' });
-  rec.scheduledDelivery = { date: req.body.date, reminderSent: false };
+  rec.scheduledDelivery = { date: req.body.date, reminderSent: false, reminderSentAt: null };
   updateClientStatus(jid, 'programado', {});
   res.json({ ok: true });
 });
@@ -980,13 +980,22 @@ app.post('/api/clients/:jid/activate-product', async (req, res) => {
 
   try {
     resumeChat(jid);
+    ensureClientRecord(jid);
     if (!conversations.has(jid)) {
       conversations.set(jid, [{ role: 'system', content: buildSystemPrompt(jid) }]);
     }
+    const client = clients.get(jid) || {};
+    client.activeProductId = product.id;
+    client.orderData = client.orderData || {};
+    client.orderData.producto = product.name;
+    clients.set(jid, client);
+    saveClients();
+
     const history = conversations.get(jid);
+    history[0] = { role: 'system', content: buildSystemPrompt(jid) };
     history.push({
       role: 'system',
-      content: `El dueño del negocio activó manualmente el asistente para el producto "${product.name}" en esta conversación. Retoma la conversación con el cliente enfocándote en ESE producto específico — preséntalo con naturalidad, como si continuaras la charla, sin decir que "te activaron" nada.`,
+      content: `El dueño del negocio activó manualmente el asistente para el producto "${product.name}". Enfócate naturalmente en ESE producto, sin mencionar activaciones internas.`,
     });
     const reply = await generateAndSendReply(jid);
     res.json({ ok: true, reply });
@@ -1691,6 +1700,8 @@ app.post('/api/simulator/message', async (req, res) => {
     if (simulationSession.history.length === 0) {
       simulationSession.history.push({ role: 'system', content: '' });
     }
+    const detectedSimulationProduct = detectProductFromText(text);
+    if (detectedSimulationProduct) simulationSession.orderData.producto = detectedSimulationProduct.name;
     simulationSession.history[0] = {
       role: 'system',
       content: buildSystemPrompt(null, simulationSession.orderData),
@@ -1886,6 +1897,7 @@ async function checkScheduledDeliveries() {
       await sendAndTrack(jid, { text });
       appendChatLog(jid, { from: 'bot', text, type: 'text', timestamp: Date.now() });
       client.scheduledDelivery.reminderSent = true;
+      client.scheduledDelivery.reminderSentAt = Date.now();
       clients.set(jid, client);
       saveClients();
       io.emit('log', `📅 Recordatorio de entrega programada enviado a ${jid.split('@')[0]}`);
@@ -2057,7 +2069,11 @@ function handleUpdateOrderData(jid, args) {
       client.orderData[f] = String(args[f]).trim();
     }
   });
-  if (args.nombre) client.name = client.orderData.nombre; // también se ve en la lista de Chats
+  if (args.producto) {
+    const product = findProductByQuery(args.producto);
+    if (product) client.activeProductId = product.id;
+  }
+  if (args.nombre) client.name = client.orderData.nombre;
   clients.set(jid, client);
   saveClients();
   io.emit('clientUpdate', { jid, client });
@@ -2080,9 +2096,26 @@ function describeMissingOrderFields(orderData) {
 function handleScheduleDelivery(jid, args) {
   ensureClientRecord(jid);
   const client = clients.get(jid);
-  client.scheduledDelivery = { date: args.fecha, reminderSent: false };
+  const rawDate = String(args?.fecha || '').trim();
+
+  // La fecha debe ser una fecha ISO válida y futura. No crea ninguna orden.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    return 'No pude programar la entrega porque la fecha no está en formato YYYY-MM-DD. No cierres el pedido todavía; pide/aclara la fecha y vuelve a intentarlo.';
+  }
+
+  const scheduledDate = new Date(`${rawDate}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (Number.isNaN(scheduledDate.getTime()) || scheduledDate < today) {
+    return `La fecha ${rawDate} ya pasó o no es válida. Pide una fecha futura y no cierres el pedido todavía.`;
+  }
+
+  client.scheduledDelivery = { date: rawDate, reminderSent: false, reminderSentAt: null };
+  clients.set(jid, client);
+  saveClients();
   updateClientStatus(jid, 'programado', {});
-  return `Entrega programada para el ${args.fecha}. El sistema le va a preguntar al cliente unos días antes si confirma.`;
+  io.emit('clientUpdate', { jid, client });
+  return `Entrega programada para el ${rawDate}. NO se creó ninguna orden todavía. El sistema le va a preguntar al cliente dos días antes si confirma.`;
 }
 
 // por número de orden si lo dio, o si no, el pedido más reciente de este
@@ -2147,9 +2180,9 @@ function stripInternalMarkers(text) {
     .trim();
 }
 
-async function runToolLoop(userId, history) {
-  const tools = [productImageTool, productVideoTool, updateOrderDataTool, checkOrderStatusTool, scheduleDeliveryTool];
-  let aiMessage = await getAIMessage(history, tools);
+async function runToolLoop(userId, history, turnText = '') {
+  const tools = getToolsForTurn(userId, turnText);
+  let aiMessage = await getAIMessage(history, tools.length ? tools : null);
   let rounds = 0;
 
   while (aiMessage.tool_calls && aiMessage.tool_calls.length > 0 && rounds < 5) {
@@ -2195,7 +2228,7 @@ async function runToolLoop(userId, history) {
       history.push({ role: 'tool', tool_call_id: toolCall.id, content: resultText });
     }
 
-    aiMessage = await getAIMessage(history, tools);
+    aiMessage = await getAIMessage(history, tools.length ? tools : null);
   }
 
   return aiMessage;
@@ -2206,7 +2239,8 @@ async function generateAndSendReply(userId) {
   const history = conversations.get(userId);
   if (!history) throw new Error('No hay conversación con este cliente todavía');
 
-  const aiMessage = await runToolLoop(userId, history);
+  const lastUserMessage = [...history].reverse().find((m) => m.role === 'user')?.content || '';
+  const aiMessage = await runToolLoop(userId, history, lastUserMessage);
 
   const reply = (aiMessage.content || '').trim() || 'Listo 😊';
   history.push({ role: 'assistant', content: reply });
@@ -2236,27 +2270,88 @@ async function generateAndSendReply(userId) {
     appendChatLog(userId, { from: 'bot', text: clientReply, type: 'text', timestamp: Date.now() });
   }
 
-  await handlePostReplyMarkers(userId, reply, cfg);
+  await handlePostReplyMarkers(userId, reply, cfg, lastUserMessage);
 
   return reply;
+}
+
+// Una confirmación programada debe ser inequívoca. No basta con que la IA
+// emita el marcador de cierre: el servidor exige que el mensaje actual del
+// cliente confirme que sí quiere que se envíe el pedido programado.
+function isExplicitScheduledConfirmation(text) {
+  const t = String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[¿?¡!.,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!t) return false;
+  if (/\b(no|todavia no|aun no|ya no|cambie de opinion|cambie de idea|cancel|cancelo|cancelar)\b/.test(t)) return false;
+
+  // Respuestas cortas y afirmativas: "sí", "claro", "confirmo", "dale", etc.
+  if (/^(si|claro|confirmo|confirmado|dale|listo|ok|okay|de acuerdo|por supuesto|adelante|envialo|mandalo|envienlo|mandenlo|si quiero|claro que si|si por favor)$/.test(t)) {
+    return true;
+  }
+
+  // Confirmaciones con una instrucción explícita de envío.
+  return /\b(si|claro|confirmo|de acuerdo|por supuesto|adelante)\b.*\b(envia|enviar|envien|enviamelo|mandalo|manden|mandenlo|quiero que lo envien|pueden enviarlo)\b/.test(t)
+    || /\b(envia|envien|enviamelo|mandalo|mandenlo|pueden enviarlo)\b.*\b(si|claro|confirmo|de acuerdo|por supuesto)\b/.test(t);
 }
 
 // Maneja lo que pasa DESPUÉS de mandar la respuesta, según las frases
 // internas que la IA haya incluido (venta cerrada, intento de cancelación,
 // intervención humana necesaria) — se usa tanto en el flujo real de
 // WhatsApp como en "Activar bot" desde el panel.
-async function handlePostReplyMarkers(userId, reply, cfg) {
-  if (reply.includes('ORDEN DE COMPRA REGISTRADA') && cfg.notificationPhoneNumber) {
-    try {
-      await notifyOwnerOfSale(cfg, userId, reply);
-    } catch (err) {
-      console.error('Error notificando la venta:', err);
-    }
-  }
+async function handlePostReplyMarkers(userId, reply, cfg, currentUserText = '') {
   if (reply.includes('ORDEN DE COMPRA REGISTRADA')) {
+    const client = clients.get(userId);
+    const scheduled = client?.scheduledDelivery;
+    const hasScheduledDelivery = !!scheduled?.date;
+    const waitingScheduledConfirmation = !!(hasScheduledDelivery && scheduled.reminderSent !== true);
+
+    // SEGURIDAD: una venta programada NO es todavía una orden de compra.
+    // Mientras el recordatorio de 2 días antes no haya sido enviado, cualquier
+    // marcador accidental de cierre queda bloqueado.
+    if (waitingScheduledConfirmation) {
+      updateClientStatus(userId, 'programado', { lastOrderSummary: reply });
+      io.emit('log', `📅 Cierre bloqueado: ${userId} tiene entrega programada para ${scheduled.date} y todavía no recibió el recordatorio`);
+      return;
+    }
+
+    // SEGURIDAD 2: incluso después del recordatorio, la orden SOLO se puede
+    // crear si el mensaje actual del cliente contiene una confirmación
+    // afirmativa clara. Así una pregunta posterior, un dato adicional o una
+    // respuesta ambigua nunca convierten por accidente la programación en una
+    // compra real.
+    if (hasScheduledDelivery && !isExplicitScheduledConfirmation(currentUserText)) {
+      updateClientStatus(userId, 'programado', { lastOrderSummary: reply });
+      io.emit('log', `📅 Cierre bloqueado: ${userId} tiene entrega programada para ${scheduled.date} pero no hubo confirmación afirmativa clara`);
+      return;
+    }
+
+    if (cfg.notificationPhoneNumber) {
+      try {
+        await notifyOwnerOfSale(cfg, userId, reply);
+      } catch (err) {
+        console.error('Error notificando la venta:', err);
+      }
+    }
+
     const name = extractNameFromOrderText(reply);
     updateClientStatus(userId, 'comprado', { lastOrderSummary: reply, ...(name ? { name } : {}) });
-    await autoCreateOrderFromSummary(userId, clients.get(userId), reply);
+    const createdOrder = await autoCreateOrderFromSummary(userId, clients.get(userId), reply);
+
+    // Una vez confirmada y convertida en orden real, la programación deja
+    // de estar pendiente para que no vuelva a disparar recordatorios.
+    if (createdOrder && clients.has(userId)) {
+      const updatedClient = clients.get(userId);
+      updatedClient.scheduledDelivery = null;
+      clients.set(userId, updatedClient);
+      saveClients();
+      io.emit('clientUpdate', { jid: userId, client: updatedClient });
+    }
   }
 
   // ---- Cancelación en dos pasos: primero se intenta retener, solo se avisa si insiste ----
@@ -2285,15 +2380,96 @@ async function handlePostReplyMarkers(userId, reply, cfg) {
 function findProductByQuery(query) {
   const products = readProducts();
   if (!query) return products.length === 1 ? products[0] : null;
-  const q = query.toLowerCase();
-  // 1) coincidencia por nombre
+  const q = String(query).toLowerCase().trim();
   let match = products.find((p) => p.name && p.name.toLowerCase().includes(q));
   if (match) return match;
-  // 2) coincidencia por palabras clave configuradas
-  match = products.find((p) => (p.keywords || []).some((k) => q.includes(k) || k.includes(q)));
+  match = products.find((p) => (p.keywords || []).some((k) => q.includes(String(k).toLowerCase()) || String(k).toLowerCase().includes(q)));
   if (match) return match;
-  // 3) si solo hay un producto, asumimos que es ese
   return products.length === 1 ? products[0] : null;
+}
+
+// Detecta producto SOLO cuando el mensaje realmente contiene el nombre o una
+// palabra clave configurada. No usa el antiguo fallback de "si hay uno solo",
+// porque un simple "hola" no debe activar un asistente de producto.
+function detectProductFromText(text) {
+  const products = readProducts();
+  const q = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let best = null;
+  let bestScore = 0;
+  for (const p of products) {
+    const name = String(p.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (name && q.includes(name)) {
+      const score = 1000 + name.length;
+      if (score > bestScore) { best = p; bestScore = score; }
+    }
+    for (const keyword of (p.keywords || [])) {
+      const k = String(keyword || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+      if (k && q.includes(k)) {
+        const score = 100 + k.length;
+        if (score > bestScore) { best = p; bestScore = score; }
+      }
+    }
+  }
+  return best;
+}
+
+function activateProductFromMessage(jid, text) {
+  if (!jid) return null;
+  const product = detectProductFromText(text);
+  if (!product) return null;
+  ensureClientRecord(jid);
+  const client = clients.get(jid);
+  client.activeProductId = product.id;
+  if (!client.orderData) client.orderData = {};
+  client.orderData.producto = product.name;
+  clients.set(jid, client);
+  saveClients();
+  return product;
+}
+
+function getActiveProduct(jid, overrideOrderData) {
+  const products = readProducts();
+  const client = jid ? clients.get(jid) : null;
+  const activeId = client?.activeProductId;
+  if (activeId) {
+    const active = products.find((p) => p.id === activeId);
+    if (active) return active;
+  }
+  const orderData = overrideOrderData || client?.orderData || {};
+  return orderData.producto ? findProductByQuery(orderData.producto) : null;
+}
+
+function getToolsForTurn(userId, text) {
+  const t = String(text || '').toLowerCase();
+  const client = clients.get(userId);
+  const orderData = client?.orderData || {};
+  const tools = [];
+
+  const asksImage = /(foto|fotos|imagen|imagenes|imágenes|cómo se ve|como se ve|verlo|verla|ver el producto|mu[eé]strame|mostrar|cat[aá]logo)/i.test(t);
+  const asksVideo = /(video|demostraci[oó]n|c[oó]mo funciona|como funciona|mu[eé]strame.*video|tienes.*video)/i.test(t);
+  // El estado debe activar la herramienta ante cualquier forma razonable de
+  // preguntar por un pedido ya realizado. Se mantiene deliberadamente amplia
+  // porque la instrucción del prompt exige consultar SIEMPRE en ese caso.
+  const asksStatus = /(pedido|orden|env[ií]o|gu[ií]a|seguimiento|transportadora|paquete|domicilio)/i.test(t)
+    && /(estado|llega|llegar[aá]?|lleg[oó]|d[oó]nde|va|viene|rastre|seguimiento|gu[ií]a|revisa|revisar|ya est[aá]|cu[aá]ndo|cuando|recib)/i.test(t);
+  const asksSchedule = /(para el|para la|el d[ií]a|la pr[oó]xima semana|la otra semana|m[aá]s adelante|despu[eé]s|despues|fecha|fecha especial|tal d[ií]a)/i.test(t);
+  // Detecta datos por patrones además de palabras guía. Esto evita perder
+  // actualizaciones cuando el cliente escribe, por ejemplo, solo un nombre
+  // y un celular en una misma línea.
+  const hasPhone = /(?:\+?57\s*)?3\d{2}[\s.-]?\d{3}[\s.-]?\d{4}\b/.test(t);
+  const hasAddress = /\b(?:cra|cr|carrera|cll|calle|av|avenida|transversal|transv|diag|diagonal|mz|manzana|supermanzana)\b.{0,35}\d/i.test(t);
+  const hasKnownLocationWord = /(municipio|departamento|barrio|villavicencio|cumaral|paratebueno|bogot[aá]|medell[ií]n|cali|neiva|ibagu[eé]|yopal|acac[ií]as|granada|restrepo|puerto l[oó]pez|san mart[ií]n)/i.test(t);
+  const givesOrderData = hasPhone || hasAddress || hasKnownLocationWord || /(me llamo|mi nombre|soy |celular|tel[eé]fono|direcci[oó]n|carrera|calle|manzana|barrio|vivo en|municipio|departamento|quiero comprar|me lo llevo|env[ií]ame|envíame|para domicilio|oficina|cantidad|unidades?)/i.test(t);
+
+  if (asksImage) tools.push(productImageTool);
+  if (asksVideo) tools.push(productVideoTool);
+  if (asksStatus) tools.push(checkOrderStatusTool);
+  if (asksSchedule) tools.push(scheduleDeliveryTool);
+  if (givesOrderData || orderData.producto || orderData.nombre || orderData.telefono || orderData.direccion) {
+    tools.push(updateOrderDataTool);
+  }
+
+  return tools;
 }
 
 // Cada imagen de un producto puede tener su propia "regla" de cuándo
@@ -2761,6 +2937,31 @@ async function transcribeAudio(base64Data, mimetype) {
   }
 }
 
+const DEFAULT_SELLER_MODE_PROMPT = `
+MODO VENDEDOR — CAPA DE VENTA ACTIVA:
+Tu objetivo es ayudar al cliente a decidir y comprar de forma natural, cálida y útil, sin sonar agresiva ni robótica.
+1. Descubre la necesidad cuando sea útil y relaciona el producto con esa necesidad.
+2. Presenta primero los beneficios y características que realmente estén escritos en el producto; nunca inventes.
+3. No descargues toda la información de golpe: avanza según lo que el cliente pregunta.
+4. Ante una objeción, responde con empatía y resuelve la duda antes de intentar cerrar.
+5. Detecta señales de compra y facilita el cierre sin presionar innecesariamente.
+6. Si existe una oferta por cantidad configurada para el producto, úsala como oportunidad de upsell sin ocultar el precio de una unidad.
+7. Si el cliente no está listo, conserva una conversación natural; no fuerces el cierre.
+8. Después de una respuesta de valor, cuando corresponda, termina con una pregunta corta que haga avanzar la conversación.
+9. Nunca inventes urgencia, escasez, testimonios, descuentos, resultados ni políticas.
+10. Las reglas obligatorias del prompt general, precios, pedidos, herramientas, cancelaciones e intervención humana tienen prioridad sobre esta capa.
+`;
+
+function isSellerModeEnabled(cfg) {
+  return cfg.sellerMode === true || cfg.sellerModeEnabled === true || cfg.modoVendedor === true;
+}
+
+function getProductSaleMode(product) {
+  const mode = String(product?.saleMode || product?.salesMode || product?.assistantMode || product?.modoVenta || '').toLowerCase().trim();
+  if (['prompt', 'con prompt', 'custom', 'specific', 'especifico', 'específico'].includes(mode)) return 'prompt';
+  return 'general';
+}
+
 function buildSystemPrompt(jid, overrideOrderData) {
   const cfg = readConfig();
   const products = readProducts();
@@ -2770,14 +2971,11 @@ function buildSystemPrompt(jid, overrideOrderData) {
   const client = jid ? clients.get(jid) : null;
   const orderData = overrideOrderData || client?.orderData || {};
 
-  // ---- Catálogo dinámico (para no pagar por el detalle completo de TODOS
-  // los productos en cada mensaje) ----
-  // Si ya sabemos de qué producto está hablando el cliente (guardado en la
-  // ficha), solo se manda el detalle completo de ESE — de los demás solo
-  // nombre y precio, mucho más barato. Si todavía no está claro, se manda el
-  // detalle completo de todos, como antes (para no perder nada mientras se
-  // aclara el interés).
-  const interestedProduct = orderData.producto ? findProductByQuery(orderData.producto) : null;
+  // ---- Agente general + asistente de producto ----
+  // En modo general solo se envían nombres y precios. Cuando el cliente
+  // menciona un producto, se activa su contexto completo. Esto evita pagar
+  // por los detalles largos de productos que no están siendo consultados.
+  const interestedProduct = getActiveProduct(jid, overrideOrderData);
 
   const catalog = products
     .map((p) => {
@@ -2786,10 +2984,7 @@ function buildSystemPrompt(jid, overrideOrderData) {
           ? `Precio: antes ${p.priceBefore}, HOY EN DESCUENTO a ${p.priceAfter}`
           : `Precio: ${p.priceAfter || p.priceBefore || 'consultar'}`;
 
-      const isFullDetail = !interestedProduct || interestedProduct.id === p.id;
-      if (!isFullDetail) {
-        // Resumen corto — solo para que la IA sepa que el producto existe y
-        // su precio, por si el cliente pregunta por otra cosa.
+      if (!interestedProduct || interestedProduct.id !== p.id) {
         return `- ${p.name} | ${priceLine}`;
       }
 
@@ -2798,13 +2993,16 @@ function buildSystemPrompt(jid, overrideOrderData) {
         p.quantityOffers && p.quantityOffers.length > 0
           ? `\n  OFERTA POR CANTIDAD ACTIVA: ${p.quantityOffers.map((o) => `${o.quantity} unidad${o.quantity > 1 ? 'es' : ''} por ${o.price}`).join(' / ')}`
           : '';
-      return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details}\n${videoLine}${offersLine}`;
+      const productAssistantPrompt = getProductSaleMode(p) === 'prompt' && p.assistantPrompt
+        ? `\n  INSTRUCCIONES ESPECÍFICAS DE ESTE PRODUCTO (MODO CON PROMPT):\n  ${p.assistantPrompt}`
+        : '';
+      return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details || '(sin detalle adicional)' }\n${videoLine}${offersLine}${productAssistantPrompt}`;
     })
     .join('\n');
 
   const catalogNote = interestedProduct
-    ? `\n(Nota: arriba solo se muestra el detalle completo del producto de interés de este cliente — si pregunta por otro producto del catálogo, usa su nombre/precio de la lista, y si necesitas más detalle de otro, dilo con naturalidad en vez de inventar.)`
-    : '';
+    ? `\n(ASISTENTE DE PRODUCTO ACTIVO: ${interestedProduct.name}. Usa el detalle completo SOLO de este producto. Si el cliente cambia a otro producto, cambia de contexto y usa únicamente la información del nuevo producto.)`
+    : `\n(MODO AGENTE GENERAL: todavía no hay un producto activo. Solo tienes nombres y precios para identificar el catálogo. No inventes características ni detalles; cuando el cliente muestre interés claro por un producto, trabaja con el contexto de ese producto.)`;
 
   const anyProductHasOffers = products.some((p) => p.quantityOffers && p.quantityOffers.length > 0);
   const offersInstructions = anyProductHasOffers
@@ -2831,6 +3029,8 @@ Eres ${cfg.assistantName}, asistente virtual de ventas de ${cfg.companyName}, at
 
 ${cfg.baseInstructions}
 
+${isSellerModeEnabled(cfg) ? DEFAULT_SELLER_MODE_PROMPT : ''}
+
 REGLA DE CATÁLOGO — LA MÁS IMPORTANTE DE TODAS, NUNCA LA ROMPAS:
 Los ÚNICOS productos que existen son los que aparecen en el catálogo (más abajo en este mensaje). Si el cliente pregunta por algo que NO está en esa lista (otro producto, otro nombre, otra categoría), debes decir con claridad que no lo tienes disponible — NUNCA inventes un producto, nombre, precio, uso o característica que no esté escrito exactamente en el catálogo, así el cliente insista o describa algo que "suena parecido". Inventar un producto que no existe es el peor error que puedes cometer — genera confusión, pedidos que no se pueden cumplir, y hace quedar mal al negocio.
 
@@ -2856,8 +3056,11 @@ Solo pasa a "oficina" si el cliente lo dice explícitamente ("prefiero recogerlo
 REGLA DE CANTIDAD — MUY IMPORTANTE:
 Si el cliente no menciona la cantidad, asume 1 unidad por defecto — no se lo preguntes como paso aparte, a menos que el producto tenga ofertas por cantidad activas, en cuyo caso sí conviene ofrecerle el combo antes de cerrar. ${offersInstructions}
 
-REGLA DE ENTREGA PROGRAMADA — MUY IMPORTANTE:
-Si el cliente quiere comprar pero para una fecha futura (ej. "lo quiero pero para el 15", "hasta la otra semana"), pide y guarda TODOS los datos normales del pedido igual que siempre (nombre, dirección, producto, etc. con actualizar_datos_pedido), pero en vez de cerrar el pedido ahora, usa la función programar_entrega con la fecha — el sistema se encarga de escribirle solo unos días antes para confirmar. Revisa la ficha de datos: si ya tiene una entrega programada con el recordatorio ya enviado y el cliente está confirmando que sí, ahí sí cierra el pedido normal con la frase obligatoria, ya no hace falta pedir nada de nuevo.
+REGLA DE ENTREGA PROGRAMADA — MUY IMPORTANTE Y OBLIGATORIA:
+Si el cliente quiere comprar pero para una fecha futura (ej. "lo quiero pero para el 15", "hasta la otra semana"), pide y guarda TODOS los datos normales del pedido igual que siempre (nombre, dirección, producto, etc. con actualizar_datos_pedido), pero usa programar_entrega con la fecha.
+AL PROGRAMAR NO ESTÁS CERRANDO LA VENTA: NO debes emitir la frase "ORDEN DE COMPRA REGISTRADA" en esa respuesta ni tratar la programación como una orden creada. La función programar_entrega guarda la fecha y mueve al cliente al estado/tablero "programado".
+El pedido REAL SOLO SE CREA después de que el sistema le pregunte al cliente dos días antes y el cliente confirme que SÍ desea que se lo enviemos. En ese momento posterior sí puedes cerrar con la frase obligatoria "ORDEN DE COMPRA REGISTRADA".
+Si la ficha muestra una entrega programada con reminderSent=false, significa que todavía NO está confirmada: aunque tengas todos los datos, NO cierres ni crees orden. Si reminderSent=true, significa que ya recibió el recordatorio; si el mensaje actual es una confirmación afirmativa posterior, ahí sí cierra el pedido.
 
 REGLA DE DIRECCIÓN COMPLETA — MUY IMPORTANTE:
 Una dirección solo cuenta como completa si identifica una casa/unidad ESPECÍFICA, no solo una zona o cruce general. Son válidas, por ejemplo:
@@ -3027,7 +3230,8 @@ function ensureClientRecord(jid) {
       },
       notes: '', // notas internas del dueño — nunca las ve el cliente ni la IA
       followUpsSent: [], // IDs de los mensajes de seguimiento/remarketing ya enviados
-      scheduledDelivery: null, // { date: 'YYYY-MM-DD', reminderSent: false } — programación de entrega
+      scheduledDelivery: null, // { date: 'YYYY-MM-DD', reminderSent: false, reminderSentAt: null } — programación de entrega
+      activeProductId: '', // producto cuyo asistente/contexto está activo
     });
   } else {
     const rec = clients.get(jid);
@@ -3040,6 +3244,7 @@ function ensureClientRecord(jid) {
       };
     }
     if (!rec.followUpsSent) rec.followUpsSent = [];
+    if (rec.activeProductId === undefined) rec.activeProductId = '';
   }
   saveClients();
   io.emit('clientUpdate', { jid, client: clients.get(jid) });
@@ -3634,7 +3839,7 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
       } else if (attempt > 2) {
         await sleep(1500);
       }
-      return await runToolLoop(userId, history);
+      return await runToolLoop(userId, history, messageText);
     } catch (err) {
       lastError = err;
       console.error(`Intento ${attempt}/${MAX_TOTAL_ATTEMPTS} de responder falló:`, err.message);
@@ -3655,7 +3860,10 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
         conversations.set(userId, [{ role: 'system', content: buildSystemPrompt(userId) }]);
       }
       const history = conversations.get(userId);
-      history[0] = { role: 'system', content: buildSystemPrompt(userId) }; // refresca por si cambiaron productos/config/ficha de datos
+      // Detectamos localmente el producto mencionado antes de llamar a la IA.
+      // Así el prompt detallado solo se activa cuando realmente hay interés.
+      activateProductFromMessage(userId, messageText);
+      history[0] = { role: 'system', content: buildSystemPrompt(userId) };
       history.push({ role: 'user', content: messageText });
 
       if (history.length > MAX_HISTORY + 1) {
@@ -3712,7 +3920,7 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
         appendChatLog(userId, { from: 'bot', text: clientReply, type: 'text', timestamp: Date.now() });
       }
 
-      await handlePostReplyMarkers(userId, reply, cfg);
+      await handlePostReplyMarkers(userId, reply, cfg, messageText);
       if (reply.includes('ORDEN DE COMPRA REGISTRADA')) io.emit('log', `🛎️ Venta registrada`);
       if (reply.includes('INTENTO DE CANCELACIÓN')) io.emit('log', `⚠️ ${userId} intentó cancelar — la IA está tratando de retenerlo`);
       if (reply.includes('NECESITA INTERVENCIÓN HUMANA')) io.emit('log', `🆘 ${userId} pausado — necesita intervención humana`);
