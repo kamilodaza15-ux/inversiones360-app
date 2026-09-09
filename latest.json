@@ -1,6 +1,6 @@
 {
-  "version": "1.31.3",
-  "notes": "Corrección de integración Skydropx: acepta correctamente el ID de cotización en las distintas estructuras de respuesta de la API y evita el mensaje falso de cotización sin ID. También ajusta la regla de precio para que el valor actual se envíe en negrita de WhatsApp usando *precio*. Se mantienen todas las funciones anteriores.",
+  "version": "1.31.5",
+  "notes": "Botones interactivos para Primer contacto por producto: el cliente selecciona tocando opciones de WhatsApp en lugar de escribir numeros; cada boton puede tener una respuesta automatica configurada. Se mantiene respaldo de texto si WhatsApp no admite el formato, junto con el rediseño visual y correcciones anteriores.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
