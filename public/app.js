@@ -1856,7 +1856,10 @@ function resetProductForm() {
   document.getElementById('p-firstContactEnabled').checked = false;
   document.getElementById('p-firstContactMessage').value = '';
   document.getElementById('p-firstContactImages').value = '';
-  document.getElementById('p-firstContactCurrent').textContent = 'Las imágenes se envían junto con el mensaje inicial. Solo se dispara una vez por producto y cliente.';
+  firstContactSequenceState = [];
+  renderFirstContactSequence();
+  updateProductSellerModeUI();
+  updateFirstContactUI();
   document.getElementById('p-customPromptBox').style.display = 'none';
   cancelEditBtn.style.display = 'none';
   formTitle.textContent = '➕ Agregar producto';
@@ -1873,6 +1876,7 @@ function priceTagHTML(p) {
 
 // ---- Banco de medios: administrar imágenes con su regla, una por una ----
 let mediaBankProductId = null;
+let firstContactSequenceState = [];
 
 async function openMediaBank(productId) {
   mediaBankProductId = productId;
@@ -1940,16 +1944,99 @@ document.getElementById('mb-addImageBtn').addEventListener('click', async () => 
   showToast('Imagen agregada.');
 });
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function fcTypeLabel(type) {
+  return ({ text: '📝 Texto', image: '🖼️ Foto', video: '🎥 Video', audio: '🎵 Audio', question: '❓ Pregunta', buttons: '🔘 Respuestas' })[type] || '📝 Texto';
+}
+
+function addFirstContactStep(type) {
+  const step = { id: `fc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, type, text: '', mediaUrl: '', delaySeconds: type === 'text' ? 0 : 2, buttons: [], _file: null };
+  if (type === 'question') step.text = '¿Qué te gustaría conocer del producto? 😊';
+  if (type === 'buttons') step.text = '¿Qué opción te interesa?';
+  firstContactSequenceState.push(step);
+  renderFirstContactSequence();
+  updateFirstContactUI();
+}
+
+function renderFirstContactSequence() {
+  const container = document.getElementById('firstContactSequenceList');
+  if (!container) return;
+  if (!firstContactSequenceState.length) {
+    container.innerHTML = `<div class="sequence-empty"><span>👋</span><b>Tu secuencia está vacía</b><small>Agrega solo lo que necesites. Por ejemplo: Texto + Foto + Pregunta.</small></div>`;
+    return;
+  }
+  container.innerHTML = firstContactSequenceState.map((step, index) => {
+    const mediaPreview = step.mediaUrl ? `<div class="sequence-media-current"><span>📎 Material guardado</span><small>${escapeHtml(step.mediaUrl.split('/').pop())}</small></div>` : '';
+    const buttonFields = step.type === 'buttons' ? `<div class="sequence-buttons-fields">${[0,1,2].map(i => `<input class="fc-button-input" data-index="${index}" data-button="${i}" value="${escapeHtml(step.buttons?.[i] || '')}" placeholder="Respuesta ${i+1} (opcional)" />`).join('')}</div>` : '';
+    const textField = (step.type === 'text' || step.type === 'question' || step.type === 'buttons') ? `<textarea class="fc-text-input" data-index="${index}" rows="${step.type === 'text' ? 4 : 3}" placeholder="${step.type === 'question' ? 'Escribe la pregunta que verá el cliente...' : 'Escribe el mensaje...'}">${escapeHtml(step.text)}</textarea>` : '';
+    const fileField = ['image','video','audio'].includes(step.type) ? `<input class="fc-media-input" data-index="${index}" type="file" accept="${step.type === 'image' ? 'image/*' : step.type === 'video' ? 'video/*' : 'audio/*'}" />${mediaPreview}` : '';
+    return `<div class="sequence-step" data-step-index="${index}">
+      <div class="sequence-step-head">
+        <div class="sequence-number">${index + 1}</div><div class="sequence-type">${fcTypeLabel(step.type)}</div>
+        <div class="sequence-actions"><button type="button" class="fc-up" data-index="${index}" title="Subir">↑</button><button type="button" class="fc-down" data-index="${index}" title="Bajar">↓</button><button type="button" class="fc-remove" data-index="${index}" title="Quitar">✕ Quitar</button></div>
+      </div>
+      <div class="sequence-step-body">${textField}${fileField}${buttonFields}<div class="sequence-delay"><label>Pausa antes de esta pieza</label><input class="fc-delay-input" data-index="${index}" type="number" min="0" max="120" value="${Number(step.delaySeconds) || 0}" /><span>segundos</span></div></div>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.fc-text-input').forEach(el => el.addEventListener('input', () => { firstContactSequenceState[Number(el.dataset.index)].text = el.value; }));
+  container.querySelectorAll('.fc-button-input').forEach(el => el.addEventListener('input', () => {
+    const step = firstContactSequenceState[Number(el.dataset.index)];
+    step.buttons = step.buttons || []; step.buttons[Number(el.dataset.button)] = el.value;
+  }));
+  container.querySelectorAll('.fc-delay-input').forEach(el => el.addEventListener('input', () => { firstContactSequenceState[Number(el.dataset.index)].delaySeconds = Math.max(0, Math.min(120, Number(el.value) || 0)); }));
+  container.querySelectorAll('.fc-media-input').forEach(el => el.addEventListener('change', () => { firstContactSequenceState[Number(el.dataset.index)]._file = el.files[0] || null; }));
+  container.querySelectorAll('.fc-up').forEach(btn => btn.addEventListener('click', () => { const i=Number(btn.dataset.index); if(i>0){ [firstContactSequenceState[i-1],firstContactSequenceState[i]]=[firstContactSequenceState[i],firstContactSequenceState[i-1]]; renderFirstContactSequence(); }}));
+  container.querySelectorAll('.fc-down').forEach(btn => btn.addEventListener('click', () => { const i=Number(btn.dataset.index); if(i<firstContactSequenceState.length-1){ [firstContactSequenceState[i],firstContactSequenceState[i+1]]=[firstContactSequenceState[i+1],firstContactSequenceState[i]]; renderFirstContactSequence(); }}));
+  container.querySelectorAll('.fc-remove').forEach(btn => btn.addEventListener('click', () => { firstContactSequenceState.splice(Number(btn.dataset.index),1); renderFirstContactSequence(); updateFirstContactUI(); }));
+}
+
+function serializeFirstContactSequence(formData) {
+  const sequence = [];
+  let mediaIndex = 0;
+  for (const step of firstContactSequenceState) {
+    const clean = { id: step.id, type: step.type, text: step.text || '', mediaUrl: step.mediaUrl || '', delaySeconds: Math.max(0, Number(step.delaySeconds) || 0), buttons: (step.buttons || []).map(x => String(x || '').trim()).filter(Boolean).slice(0,3) };
+    if (step._file) {
+      clean.mediaIndex = mediaIndex++;
+      formData.append('firstContactMedia', step._file);
+    }
+    sequence.push(clean);
+  }
+  formData.append('firstContactSequence', JSON.stringify(sequence));
+}
+
+function updateFirstContactUI() {
+  const enabled = document.getElementById('p-firstContactEnabled').checked;
+  const label = document.getElementById('p-firstContactLabel');
+  if (label) { label.textContent = enabled ? 'ACTIVADO' : 'DESACTIVADO'; label.className = `switch-status ${enabled ? 'on' : 'off'}`; }
+  const builder = document.getElementById('firstContactBuilder');
+  if (builder) builder.classList.toggle('disabled', !enabled);
+}
+
+document.querySelectorAll('[data-add-fc]').forEach(btn => btn.addEventListener('click', () => addFirstContactStep(btn.dataset.addFc)));
+document.getElementById('p-firstContactEnabled').addEventListener('change', updateFirstContactUI);
+
 function updateProductSellerModeUI() {
   const enabled = document.getElementById('p-sellerModeEnabled').checked;
   const label = document.getElementById('p-sellerModeLabel');
   label.textContent = enabled ? 'ACTIVADO' : 'DESACTIVADO';
-  label.style.color = enabled ? '#16a34a' : '#dc2626';
+  label.className = `switch-status ${enabled ? 'on' : 'off'}`;
   const mode = document.getElementById('p-saleMode').value;
   document.getElementById('p-customPromptBox').style.display = enabled && mode === 'prompt' ? 'block' : 'none';
+  document.getElementById('p-sellerModeOptions').classList.toggle('disabled', !enabled);
 }
 document.getElementById('p-sellerModeEnabled').addEventListener('change', updateProductSellerModeUI);
 document.getElementById('p-saleMode').addEventListener('change', updateProductSellerModeUI);
+renderFirstContactSequence();
+updateFirstContactUI();
 
 async function loadProducts() {
   const products = await fetch('/api/products').then((r) => r.json());
@@ -2019,7 +2106,9 @@ function openProductFormCard() {
       updateProductSellerModeUI();
       document.getElementById('p-firstContactEnabled').checked = p.firstContactEnabled === true;
       document.getElementById('p-firstContactMessage').value = p.firstContactMessage || '';
-      document.getElementById('p-firstContactCurrent').textContent = (p.firstContactImages || []).length ? `📷 Tiene ${(p.firstContactImages || []).length} imagen(es) de primer contacto cargada(s). Selecciona nuevos archivos solo si quieres reemplazarlas.` : 'Las imágenes se envían junto con el mensaje inicial. Solo se dispara una vez por producto y cliente.';
+      firstContactSequenceState = Array.isArray(p.firstContactSequence) ? p.firstContactSequence.map(step => ({ ...step, buttons: Array.isArray(step.buttons) ? [...step.buttons] : [], _file: null })) : [];
+      renderFirstContactSequence();
+      updateFirstContactUI();
       document.getElementById('p-video-current').textContent = p.video
         ? '🎥 Ya tiene un video cargado. Elige otro archivo aquí solo si quieres reemplazarlo.'
         : '';
@@ -2059,9 +2148,9 @@ productForm.addEventListener('submit', async (e) => {
   formData.append('assistantPrompt', document.getElementById('p-assistantPrompt').value);
   formData.append('sellerModeEnabled', document.getElementById('p-sellerModeEnabled').checked ? 'true' : 'false');
   formData.append('firstContactEnabled', document.getElementById('p-firstContactEnabled').checked ? 'true' : 'false');
-  formData.append('firstContactMessage', document.getElementById('p-firstContactMessage').value);
-  const firstContactFiles = document.getElementById('p-firstContactImages').files;
-  for (let i = 0; i < Math.min(2, firstContactFiles.length); i++) formData.append('firstContactImages', firstContactFiles[i]);
+  const firstTextStep = firstContactSequenceState.find(step => (step.type === 'text' || step.type === 'question') && String(step.text || '').trim());
+  formData.append('firstContactMessage', firstTextStep ? firstTextStep.text : '');
+  serializeFirstContactSequence(formData);
   const imageFiles = document.getElementById('p-images').files;
   for (const file of imageFiles) formData.append('images', file);
   const videoFile = document.getElementById('p-video').files[0];
