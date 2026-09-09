@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.31.3';
+const CURRENT_VERSION = '1.31.5';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -459,7 +459,10 @@ function normalizeFirstContactSequence(product) {
         text: step.text || '',
         mediaUrl: step.mediaUrl || '',
         delaySeconds: Math.max(0, Number(step.delaySeconds) || 0),
-        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b) => String(b || '').trim()).filter(Boolean) : [],
+        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b, bi) => {
+          if (b && typeof b === 'object') return { id: String(b.id || `b${bi + 1}`), text: String(b.text || b.label || '').trim(), response: String(b.response || '').trim() };
+          return { id: `b${bi + 1}`, text: String(b || '').trim(), response: '' };
+        }).filter((b) => b.text) : [],
       }));
   }
 
@@ -664,7 +667,10 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
         text: step.text || '',
         mediaUrl: step.mediaIndex !== undefined && media[Number(step.mediaIndex)] ? `/media/${media[Number(step.mediaIndex)].filename}` : (step.mediaUrl || ''),
         delaySeconds: Math.max(0, Number(step.delaySeconds) || 0),
-        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b) => String(b || '').trim()).filter(Boolean) : [],
+        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b, bi) => {
+          if (b && typeof b === 'object') return { id: String(b.id || `b${bi + 1}`), text: String(b.text || b.label || '').trim(), response: String(b.response || '').trim() };
+          return { id: `b${bi + 1}`, text: String(b || '').trim(), response: '' };
+        }).filter((b) => b.text) : [],
       })).filter((step) => step.type !== 'text' || step.text.trim() || step.buttons.length === 0) : [];
     })(),
     images: (files.images || []).map((f) => `/media/${f.filename}`),
@@ -716,7 +722,10 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
         text: step.text || '',
         mediaUrl: step.mediaIndex !== undefined && media[Number(step.mediaIndex)] ? `/media/${media[Number(step.mediaIndex)].filename}` : (step.mediaUrl || ''),
         delaySeconds: Math.max(0, Number(step.delaySeconds) || 0),
-        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b) => String(b || '').trim()).filter(Boolean) : [],
+        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b, bi) => {
+          if (b && typeof b === 'object') return { id: String(b.id || `b${bi + 1}`), text: String(b.text || b.label || '').trim(), response: String(b.response || '').trim() };
+          return { id: `b${bi + 1}`, text: String(b || '').trim(), response: '' };
+        }).filter((b) => b.text) : [],
       })).filter((step) => step.type !== 'text' || step.text.trim() || step.buttons.length === 0) : [];
     })(),
     keywords:
@@ -2495,7 +2504,9 @@ async function generateAndSendReply(userId) {
   // El cliente nunca debe ver las frases "señal interna" (como la de
   // intervención humana) — se usan para que nuestro sistema las detecte,
   // pero se limpian del texto que de verdad se manda/guarda como visto.
-  const clientReply = stripInternalMarkers(reply);
+  let clientReply = stripInternalMarkers(reply);
+  // Refuerzo visual: el precio ACTUAL debe llegar en negrita de WhatsApp.
+  clientReply = clientReply.replace(/(Hoy\s+está\s+en\s+descuento:\s*)(?!\*)(\$?[\d.,]+)/gi, '$1*$2*');
 
   const isOrderConfirmation = reply.includes('ORDEN DE COMPRA REGISTRADA');
   const voiceMode = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
@@ -3298,6 +3309,21 @@ Cuando el producto activo tenga precio anterior Y precio actual, SIEMPRE present
 🚚 Envío GRATIS + 💵 pago CONTRA ENTREGA.
 Después termina normalmente con una pregunta que impulse la conversación de compra. Si existe oferta por cantidad configurada, presenta también esa opción y el ahorro cuando sea posible. NUNCA inventes “solo por hoy”, “tiempo limitado”, “últimas unidades” o cualquier urgencia si no está configurada en el producto.
 
+REGLA DE OBJECIONES DE PRECIO Y ALTERNATIVAS — OBLIGATORIA:
+Si el cliente dice que el producto está caro, que no le alcanza, que busca algo más económico o pide una opción de menor presupuesto, NO muestres productos al azar del catálogo. Primero intenta resolver la objeción con el MISMO producto: si tiene una oferta por cantidad configurada, puedes mostrarla; si no tiene una alternativa más económica configurada para ese mismo producto, dilo con naturalidad y ofrece dejarle la información para después. SOLO puedes recomendar otro producto si la información del catálogo o del prompt específico de ese producto indica claramente que sirve para la MISMA necesidad del cliente y es una alternativa real para ese caso. Nunca recomiendes otro producto únicamente porque es más barato, y jamás menciones productos que no tengan relación con la necesidad que el cliente acaba de expresar. Por ejemplo, si pregunta por un serum para una necesidad de piel, no ofrezcas un tapete masajeador ni un producto para otra parte del cuerpo solo porque aparecen en el catálogo. Si no existe una alternativa relacionada y más económica, no inventes una.
+
+REGLA DE RESPUESTAS NUMÉRICAS — OBLIGATORIA:
+Si el cliente responde con un número (por ejemplo, "1", "2" o "3"), NO lo interpretes automáticamente como cantidad de unidades. Si el mensaje anterior del asistente fue una lista de opciones o una pregunta con opciones numeradas, el número significa la opción elegida. Solo registra cantidad cuando el contexto inmediatamente anterior indique que se estaba preguntando o confirmando la cantidad de unidades. Nunca conviertas una selección de opción en una cantidad.
+
+REGLA DE BOTONES INTERACTIVOS — OBLIGATORIA:
+Cuando una pregunta del primer contacto tenga respuestas configuradas, el sistema intentará mostrarlas como botones interactivos de WhatsApp. El cliente debe poder seleccionar una opción tocándola, sin escribir números. Cada botón puede tener una respuesta automática configurada; si existe, el sistema la enviará directamente y no debe generarse una segunda respuesta de IA. Si WhatsApp no permite los botones interactivos en esa cuenta, el sistema usará un respaldo de texto con viñetas, pero nunca debe interpretar una selección numérica como cantidad salvo que realmente se esté preguntando la cantidad.
+
+REGLA DE SALUD Y USO — OBLIGATORIA:
+No atribuyas a un producto beneficios para dolores, enfermedades o síntomas que no estén explícitamente descritos en la ficha del producto. En productos cosméticos o de cuidado personal, no presentes el producto como tratamiento médico ni inventes indicaciones. Si el cliente menciona una necesidad que no corresponde al uso documentado del producto activo, acláralo con honestidad y vuelve a la información real del producto.
+
+REGLA DE PERTINENCIA DE PREGUNTAS — OBLIGATORIA:
+No inventes listas de problemas, síntomas, enfermedades, partes del cuerpo, tipos de piel ni usos. Pregunta únicamente por aspectos que estén respaldados por la información del producto activo o por el prompt específico de ese producto. Si el cliente pregunta por un producto concreto, mantén toda la conversación centrada en ese producto y en la necesidad que realmente expresó. Nunca conviertas una respuesta como una cantidad "2" en una cantidad de unidades si el contexto no indica que estaba hablando de cantidad; primero interpreta el mensaje según la conversación.
+
 REGLA DE CATÁLOGO — LA MÁS IMPORTANTE DE TODAS, NUNCA LA ROMPAS:
 Los ÚNICOS productos que existen son los que aparecen en el catálogo (más abajo en este mensaje). Si el cliente pregunta por algo que NO está en esa lista (otro producto, otro nombre, otra categoría), debes decir con claridad que no lo tienes disponible — NUNCA inventes un producto, nombre, precio, uso o característica que no esté escrito exactamente en el catálogo, así el cliente insista o describa algo que "suena parecido". Inventar un producto que no existe es el peor error que puedes cometer — genera confusión, pedidos que no se pueden cumplir, y hace quedar mal al negocio.
 
@@ -3501,6 +3527,7 @@ function ensureClientRecord(jid) {
       scheduledDelivery: null, // { date: 'YYYY-MM-DD', reminderSent: false, reminderSentAt: null } — programación de entrega
       activeProductId: '', // producto cuyo asistente/contexto está activo
       firstContactSentForProduct: {}, // evita repetir el primer contacto del mismo producto
+      pendingInteractiveButtons: {}, // botones de WhatsApp pendientes y sus respuestas automáticas
     });
   } else {
     const rec = clients.get(jid);
@@ -3516,6 +3543,7 @@ function ensureClientRecord(jid) {
     if (rec.activeProductId === undefined) rec.activeProductId = '';
     if (rec.orderData.transportadora === undefined) rec.orderData.transportadora = '';
     if (!rec.firstContactSentForProduct || typeof rec.firstContactSentForProduct !== 'object') rec.firstContactSentForProduct = {};
+    if (!rec.pendingInteractiveButtons || typeof rec.pendingInteractiveButtons !== 'object') rec.pendingInteractiveButtons = {};
   }
   saveClients();
   io.emit('clientUpdate', { jid, client: clients.get(jid) });
@@ -4070,9 +4098,25 @@ async function startBot() {
         [msg.message?.conversation || msg.message?.extendedTextMessage?.text || '', adContextText].filter(Boolean).join(' ')
       );
 
+      const buttonResponse = msg.message?.buttonsResponseMessage || msg.message?.interactiveResponseMessage?.nativeFlowResponseMessage || null;
+      const selectedButtonId = buttonResponse?.selectedButtonId || '';
+      const selectedButtonText = buttonResponse?.selectedDisplayText || '';
+      let buttonAutoResponse = '';
+      if (selectedButtonId) {
+        const pending = ensureClientRecord(userId) && clients.get(userId)?.pendingInteractiveButtons?.[selectedButtonId];
+        if (pending) {
+          buttonAutoResponse = String(pending.response || '').trim();
+          const rec = clients.get(userId);
+          delete rec.pendingInteractiveButtons[selectedButtonId];
+          clients.set(userId, rec);
+          saveClients();
+        }
+      }
+
       const rawText =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
+        selectedButtonText ||
         '';
 
       // ---- Notas de voz: transcribir antes de seguir el flujo normal ----
@@ -4099,6 +4143,16 @@ async function startBot() {
       }
 
       if (!messageText) return; // otro tipo de mensaje (sticker, ubicación, etc.) — lo ignoramos por ahora
+
+      // Si el botón tenía una respuesta configurada, se envía de inmediato y
+      // no se llama a la IA para evitar una segunda respuesta innecesaria.
+      if (buttonAutoResponse) {
+        ensureClientRecord(userId);
+        appendChatLog(userId, { from: 'client', text: selectedButtonText || messageText, type: 'button', timestamp: Date.now() });
+        await sendAndTrack(userId, { text: buttonAutoResponse });
+        appendChatLog(userId, { from: 'bot', text: buttonAutoResponse, type: 'text', timestamp: Date.now() });
+        return;
+      }
 
       // Para audios, la detección del producto también debe hacerse con la
       // transcripción; de lo contrario una campaña podría quedar sin asistente
@@ -4230,13 +4284,37 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
           await sendAndTrack(userId, { text });
           appendChatLog(userId, { from: 'bot', text, type: 'text', timestamp: Date.now() });
         }
-        // WhatsApp no siempre permite botones interactivos según la versión/cuenta.
-        // Por compatibilidad enviamos las opciones como texto claro.
-        const buttons = (step.buttons || []).slice(0, 3).filter(Boolean);
+        const buttons = (step.buttons || []).slice(0, 3).filter((b) => b && typeof b === 'object' && b.text);
         if (buttons.length) {
-          const optionsText = buttons.map((b, n) => `${n + 1}. ${b}`).join('\n');
-          await sendAndTrack(userId, { text: optionsText });
-          appendChatLog(userId, { from: 'bot', text: optionsText, type: 'text', timestamp: Date.now() });
+          // Botones nativos de WhatsApp: el cliente selecciona tocando el botón,
+          // sin escribir 1/2/3. Guardamos la respuesta asociada para contestar
+          // automáticamente cuando WhatsApp devuelva el buttonResponseMessage.
+          const nativeButtons = buttons.map((b, n) => ({
+            buttonId: `fcbtn_${String(product.id || 'p')}_${String(step.id || i)}_${n}`.slice(0, 256),
+            buttonText: { displayText: String(b.text).slice(0, 20) },
+            type: 1,
+          }));
+          const pending = {};
+          buttons.forEach((b, n) => {
+            pending[nativeButtons[n].buttonId] = { productId: product.id, stepId: step.id, text: b.text, response: b.response || '' };
+          });
+          client.pendingInteractiveButtons = { ...(client.pendingInteractiveButtons || {}), ...pending };
+          // Baileys soporta este formato en cuentas donde WhatsApp mantiene
+          // habilitados los mensajes interactivos clásicos. Si la cuenta no lo
+          // acepta, caemos a texto como respaldo para no romper la conversación.
+          try {
+            await sendAndTrack(userId, {
+              text: '',
+              buttons: nativeButtons,
+              headerType: 1,
+            });
+            appendChatLog(userId, { from: 'bot', text: buttons.map((b) => `• ${b.text}`).join('\n'), type: 'buttons', timestamp: Date.now() });
+          } catch (buttonErr) {
+            console.warn('Botones interactivos no disponibles; usando respaldo de texto:', buttonErr.message);
+            const optionsText = buttons.map((b) => `• ${b.text}`).join('\n');
+            await sendAndTrack(userId, { text: optionsText });
+            appendChatLog(userId, { from: 'bot', text: optionsText, type: 'text', timestamp: Date.now() });
+          }
         }
       } else if (step.mediaUrl) {
         const mediaPath = path.join(__dirname, String(step.mediaUrl).replace(/^\//, ''));
