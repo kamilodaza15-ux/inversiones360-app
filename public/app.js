@@ -1637,12 +1637,54 @@ function openOrderDetail(id) {
   statusSelect.innerHTML = ORDER_STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
   statusSelect.value = order.status || 'pendiente';
   document.getElementById('uploadStatus').textContent = '';
+  const quoteBox = document.getElementById('skydropxQuoteBox');
+  if (quoteBox) {
+    quoteBox.style.display = 'none';
+    quoteBox.innerHTML = '';
+  }
   const chatBtn = document.getElementById('goToOrderChatBtn');
   if (chatBtn) {
     chatBtn.style.display = order.clientJid ? 'inline-flex' : 'none';
     chatBtn.dataset.clientJid = order.clientJid || '';
   }
   document.getElementById('orderDetailOverlay').style.display = 'flex';
+
+  // La cotización de Skydropx queda visible automáticamente al abrir el pedido.
+  // Si ya existe una cotización guardada, se muestra sin volver a cobrar/consultar;
+  // si no existe, se genera una nueva.
+  if (order.skydropxRates?.length) {
+    renderSavedSkydropxQuote(order);
+  } else if (order.product && order.price) {
+    document.getElementById('quoteSkydropxBtn')?.click();
+  }
+}
+
+function renderSavedSkydropxQuote(order) {
+  const box = document.getElementById('skydropxQuoteBox');
+  if (!box) return;
+  const money = (v) => '$' + Number(v || 0).toLocaleString('es-CO');
+  const selectedId = order.skydropxSelectedRateId || '';
+  const rates = Array.isArray(order.skydropxRates) ? order.skydropxRates : [];
+  const rows = rates.map((r, i) => `
+    <button type="button" class="skydropx-rate-row ${i === 0 ? 'best' : ''} ${String(r.id) === String(selectedId) ? 'selected' : ''}" data-rate-id="${escapeHtml(r.id)}">
+      <div><strong>${i === 0 ? '⭐ ' : ''}${escapeHtml(r.carrier || 'Transportadora')}</strong><small>${escapeHtml(r.service || 'Servicio de envío')}</small></div>
+      <strong>${money(r.total)}</strong>
+    </button>`).join('');
+  box.innerHTML = `<div class="skydropx-quote-head"><strong>🚚 Cotización Skydropx</strong><span>${escapeHtml(order.skydropxEnvironment || '')}</span></div>${order.skydropxCredits ? `<div class="skydropx-credit">💳 Saldo: <strong>${money(order.skydropxCredits.balance)} ${escapeHtml(order.skydropxCredits.currency || '')}</strong></div>` : ''}<div class="skydropx-rates">${rows}</div><div class="skydropx-quote-foot">⭐ La primera es la tarifa más económica disponible.<br>👆 Haz clic en una tarifa para seleccionarla y luego usa “Subir a Skydropx”.</div>`;
+  box.querySelectorAll('[data-rate-id]').forEach((el) => el.addEventListener('click', async () => {
+    const rateId = el.dataset.rateId;
+    const statusEl = document.getElementById('uploadStatus');
+    statusEl.textContent = 'Seleccionando tarifa...';
+    try {
+      const selectedRes = await fetch(`/api/orders/${editingOrderId}/select-skydropx-rate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rateId }) }).then((r) => r.json());
+      if (!selectedRes.ok) throw new Error(selectedRes.error || 'No se pudo seleccionar la tarifa.');
+      box.querySelectorAll('[data-rate-id]').forEach((b) => b.classList.toggle('selected', String(b.dataset.rateId) === String(rateId)));
+      statusEl.style.color = '#16a34a';
+      statusEl.textContent = `✔ Tarifa seleccionada: ${selectedRes.selectedRate?.carrier || ''} — ${money(selectedRes.selectedRate?.total)}`;
+      loadOrders();
+    } catch (e) { statusEl.style.color = '#dc2626'; statusEl.textContent = e.message; }
+  }));
+  box.style.display = 'block';
 }
 document.getElementById('goToOrderChatBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('goToOrderChatBtn');
