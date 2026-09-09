@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.31.7';
+const CURRENT_VERSION = '1.31.8';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1668,6 +1668,88 @@ async function getSkydropxProductDimensions(cfg, skydropxProductId) {
   }
 }
 
+
+async function quoteOrderWithSkydropx(order) {
+  const cfg = readConfig();
+  if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
+    throw new Error('Falta configurar el Client ID y Client Secret de Skydropx en Configuración.');
+  }
+  if (!cfg.skydropxOriginName || !cfg.skydropxOriginStreet || !cfg.skydropxOriginCity) {
+    throw new Error('Falta configurar la dirección de origen de tus envíos en Configuración → Skydropx.');
+  }
+
+  const catalogProduct = findProductByQuery(order.product);
+  const skydropxDims = await getSkydropxProductDimensions(cfg, catalogProduct?.skydropxProductId);
+  const declaredAmount = Number(String(order.price || '').replace(/[^\d]/g, '')) || 0;
+  if (!declaredAmount) throw new Error('El pedido no tiene un precio válido para cotizar el flete en Skydropx.');
+
+  const quotationBody = {
+    quotation: {
+      address_from: {
+        country_code: 'CO', postal_code: cfg.skydropxOriginPostalCode || '',
+        area_level1: cfg.skydropxOriginState || '', area_level2: cfg.skydropxOriginCity || '',
+        street1: cfg.skydropxOriginStreet, name: cfg.skydropxOriginName, company: cfg.companyName || '',
+        phone: cfg.skydropxOriginPhone || '', email: cfg.skydropxOriginEmail || '',
+        reference: cfg.skydropxOriginReference || 'Sin referencia',
+      },
+      address_to: {
+        country_code: 'CO', postal_code: order.postalCode || '',
+        area_level1: order.department || '', area_level2: order.city || '',
+        street1: order.address || order.city || '', name: order.clientName || 'Cliente',
+        phone: order.clientPhone || '', email: 'cliente@example.com', reference: order.neighborhood || 'Sin referencia',
+      },
+      parcels: [{
+        weight: skydropxDims?.weight || Number(cfg.skydropxDefaultWeightKg) || 1,
+        length: skydropxDims?.length || Number(cfg.skydropxDefaultLengthCm) || 20,
+        width: skydropxDims?.width || Number(cfg.skydropxDefaultWidthCm) || 20,
+        height: skydropxDims?.height || Number(cfg.skydropxDefaultHeightCm) || 10,
+        quantity: 1, declared_amount: declaredAmount,
+        package_content: String(order.product || catalogProduct?.name || 'Producto').slice(0, 200),
+        package_type: 'package', dimension_unit: 'CM', mass_unit: 'KG',
+      }],
+      cash_on_delivery: true, recipient_pays_shipping: false,
+    },
+  };
+
+  const quotationRes = await skydropxRequest(cfg, '/api/v1/quotations', { method: 'POST', body: JSON.stringify(quotationBody) });
+  const quotationId = quotationRes?.id || quotationRes?.data?.id || quotationRes?.data?.data?.id || quotationRes?.quotation?.id || quotationRes?.quotation?.data?.id;
+  if (!quotationId) throw new Error('Skydropx no devolvió un id de cotización.');
+
+  let quotationData = quotationRes;
+  for (let i = 0; i < 8; i++) {
+    const isCompleted = quotationData?.is_completed === true || quotationData?.data?.attributes?.status === 'completed';
+    if (isCompleted) break;
+    await sleep(1500);
+    quotationData = await skydropxRequest(cfg, `/api/v1/quotations/${quotationId}`);
+  }
+
+  const rawRates = Array.isArray(quotationData?.rates) ? quotationData.rates
+    : Array.isArray(quotationData?.data?.rates) ? quotationData.data.rates
+    : Array.isArray(quotationData?.included) ? quotationData.included.filter((x) => x.type === 'rate').map((x) => ({ id: x.id, ...x.attributes }))
+    : Array.isArray(quotationData?.data?.included) ? quotationData.data.included.filter((x) => x.type === 'rate').map((x) => ({ id: x.id, ...x.attributes })) : [];
+
+  const rates = rawRates.map((r) => ({
+    id: r?.id || r?.rate_id || r?.attributes?.id || '',
+    carrier: r?.provider_display_name || r?.provider_name || r?.carrier_name || r?.attributes?.provider_display_name || r?.attributes?.provider_name || r?.attributes?.carrier_name || 'Transportadora',
+    service: r?.service_name || r?.service || r?.attributes?.service_name || r?.attributes?.service || r?.name || '',
+    total: Number(r?.total ?? r?.price ?? r?.amount ?? r?.attributes?.total ?? r?.attributes?.price ?? r?.attributes?.amount) || 0,
+    currency: r?.currency || r?.attributes?.currency || 'COP',
+    raw: r,
+  })).filter((r) => r.id && r.total > 0);
+
+  if (!rates.length) throw new Error('Skydropx no encontró tarifas disponibles para esta dirección.');
+  rates.sort((a,b) => a.total - b.total);
+  return { quotationId, rates, balance: null, environment: cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción' };
+}
+
+async function getSkydropxCredits() {
+  const cfg = readConfig();
+  if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) throw new Error('Falta configurar las credenciales de Skydropx.');
+  const data = await skydropxRequest(cfg, '/api/v1/finance/credits');
+  const source = data?.data?.attributes || data?.data || data;
+  return { balance: Number(source?.balance ?? source?.credits ?? source?.available_balance) || 0, currency: source?.currency || 'COP', environment: cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción' };
+}
+
 async function uploadOrderToSkydropx(order) {
   const cfg = readConfig();
   if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
@@ -1920,6 +2002,25 @@ app.get('/api/dropi/search-products', async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+
+app.post('/api/orders/:id/quote-skydropx', async (req, res) => {
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+  try {
+    const quote = await quoteOrderWithSkydropx(order);
+    let credits = null;
+    try { credits = await getSkydropxCredits(); } catch (e) { console.warn('No se pudo consultar saldo Skydropx:', e.message); }
+    res.json({ ok: true, quotationId: quote.quotationId, rates: quote.rates.map(({raw, ...r}) => r), credits, environment: quote.environment });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/skydropx/credits', async (req, res) => {
+  try { res.json({ ok: true, ...(await getSkydropxCredits()) }); }
+  catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 app.post('/api/orders/:id/upload-skydropx', async (req, res) => {
