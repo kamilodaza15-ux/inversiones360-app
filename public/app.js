@@ -896,6 +896,36 @@ async function selectClient(jid) {
   renderMessages(messages);
 }
 
+function getClientLatestOrder(jid) {
+  if (!jid) return null;
+  const clientOrders = ordersCache.filter((o) => o.clientJid === jid);
+  if (!clientOrders.length) return null;
+  return [...clientOrders].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+}
+
+function updateFloatingOrderButton() {
+  const btn = document.getElementById('floatingGoToOrderBtn');
+  if (!btn) return;
+  const order = getClientLatestOrder(selectedClientJid);
+  btn.style.display = order ? 'flex' : 'none';
+  if (order) {
+    btn.dataset.orderId = order.id;
+    btn.title = `Ir al pedido ${order.id}`;
+  }
+}
+
+function goToOrderFromChat() {
+  const order = getClientLatestOrder(selectedClientJid);
+  if (!order) {
+    showToast('Este cliente todavía no tiene un pedido registrado.', 'error');
+    return;
+  }
+  document.querySelector('.nav-item[data-tab="pedidos"]')?.click();
+  setTimeout(() => openOrderDetail(order.id), 0);
+}
+
+document.getElementById('floatingGoToOrderBtn')?.addEventListener('click', goToOrderFromChat);
+
 function renderMessages(messages) {
   const container = document.getElementById('chatMessages');
   container.innerHTML = '';
@@ -1370,7 +1400,10 @@ socket.on('chatMessage', ({ jid, entry }) => {
 });
 socket.on('clientUpdate', ({ jid, client }) => {
   loadClients();
-  if (jid === selectedClientJid) renderRightPanel(client);
+  if (jid === selectedClientJid) {
+    renderRightPanel(client);
+    updateFloatingOrderButton();
+  }
 });
 socket.on('pauseUpdate', async ({ jid, pausedUntil }) => {
   await loadClients();
@@ -1386,6 +1419,7 @@ socket.on('clientDeleted', ({ jid }) => {
     document.getElementById('chatHeader').textContent = 'Selecciona un cliente de la lista →';
     document.getElementById('chatMessages').innerHTML = '';
     document.getElementById('chatsRightPanel').style.display = 'none';
+    updateFloatingOrderButton();
   }
 });
 
@@ -1412,6 +1446,7 @@ async function loadOrders() {
   selectedOrderIds.clear();
   renderOrderStats();
   renderOrdersTable();
+  updateFloatingOrderButton();
 }
 document.getElementById('refreshOrdersBtn').addEventListener('click', loadOrders);
 
@@ -1600,8 +1635,26 @@ function openOrderDetail(id) {
   statusSelect.innerHTML = ORDER_STATUS_COLUMNS.map((s) => `<option value="${s.key}">${s.label}</option>`).join('');
   statusSelect.value = order.status || 'pendiente';
   document.getElementById('uploadStatus').textContent = '';
+  const chatBtn = document.getElementById('goToOrderChatBtn');
+  if (chatBtn) {
+    chatBtn.style.display = order.clientJid ? 'inline-flex' : 'none';
+    chatBtn.dataset.clientJid = order.clientJid || '';
+  }
   document.getElementById('orderDetailOverlay').style.display = 'flex';
 }
+document.getElementById('goToOrderChatBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('goToOrderChatBtn');
+  const jid = btn?.dataset.clientJid;
+  if (!jid) {
+    showToast('Este pedido no tiene un chat de WhatsApp asociado.', 'error');
+    return;
+  }
+  document.getElementById('orderDetailOverlay').style.display = 'none';
+  document.querySelector('.nav-item[data-tab="chats"]')?.click();
+  await selectClient(jid);
+  if (window.innerWidth <= 860) showMobileChatView();
+});
+
 document.getElementById('closeOrderDetailBtn').addEventListener('click', () => {
   document.getElementById('orderDetailOverlay').style.display = 'none';
 });
