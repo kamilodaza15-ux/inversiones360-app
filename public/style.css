@@ -872,3 +872,56 @@ input:focus, select:focus, textarea:focus {
 .first-contact-builder{padding:15px 18px}.builder-help{font-size:12px;color:var(--text-muted);line-height:1.55;margin-bottom:12px}.sequence-empty{padding:22px;text-align:center;border:1px dashed var(--border-color);border-radius:14px;background:var(--bg-input);display:flex;flex-direction:column;gap:5px}.sequence-empty span{font-size:27px}.sequence-empty small{color:var(--text-muted)}.sequence-list{display:flex;flex-direction:column;gap:10px}.sequence-step{border:1px solid var(--border-color);border-radius:15px;background:var(--bg-input);overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,.04)}.sequence-step-head{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid var(--border-color);background:var(--bg-hover)}.sequence-number{width:27px;height:27px;border-radius:9px;display:grid;place-items:center;background:#0f766e;color:#fff;font-size:12px;font-weight:800}.sequence-type{font-weight:800;font-size:13px;flex:1}.sequence-actions{display:flex;gap:5px}.sequence-actions button{border:1px solid var(--border-color);background:var(--bg-input);border-radius:8px;padding:5px 8px;cursor:pointer;font-size:12px}.sequence-actions .fc-remove{color:#dc2626}.sequence-step-body{padding:12px}.sequence-step-body textarea{width:100%;box-sizing:border-box}.sequence-delay{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;color:var(--text-muted)}.sequence-delay input{width:75px}.sequence-media-current{margin-top:8px;padding:8px 10px;border-radius:9px;background:var(--bg-hover);display:flex;justify-content:space-between;gap:8px;font-size:11px}.sequence-media-current small{color:var(--text-muted);word-break:break-all}.sequence-buttons-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:10px}.sequence-add-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.sequence-add-btn{border:1px dashed var(--border-color);background:var(--bg-input);border-radius:10px;padding:9px 12px;cursor:pointer;font-weight:700;font-size:12px}.sequence-add-btn:hover{transform:translateY(-1px);box-shadow:0 5px 12px rgba(0,0,0,.07)}.sequence-add-btn.text{color:#7c3aed}.sequence-add-btn.media{color:#0369a1}.sequence-add-btn.question{color:#c2410c}.sequence-add-btn.buttons{color:#047857}
 .content-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px 18px}.content-card{padding:14px;border:1px solid var(--border-color);border-radius:14px;background:var(--bg-input)}.content-card-head{font-weight:800;margin-bottom:8px}.content-card label{margin-top:0}.content-card input{width:100%;box-sizing:border-box}.content-card p{margin-bottom:0}
 @media(max-width:700px){.product-form-heading{padding:15px}.product-form-icon{display:none}.content-grid{grid-template-columns:1fr}.sequence-buttons-fields{grid-template-columns:1fr}.sequence-actions button{padding:5px 6px}}
+
+
+/* ===== Inversiones 360 — Refresh visual PRO 1.31.4 ===== */
+:root{
+  --i360-purple:#7c3aed;
+  --i360-blue:#2563eb;
+  --i360-cyan:#0891b2;
+  --i360-green:#16a34a;
+  --i360-orange:#f59e0b;
+  --i360-red:#dc2626;
+  --i360-shadow:0 12px 34px rgba(15,23,42,.08);
+  --i360-shadow-hover:0 18px 42px rgba(15,23,42,.13);
+}
+body{background:linear-gradient(180deg,#f8fafc 0%,#f3f5fb 100%)}
+.sidebar{box-shadow:8px 0 28px rgba(15,23,42,.06)}
+.main-content{background:transparent}
+.tab-content{animation:i360Fade .22s ease both}
+@keyframes i360Fade{from{opacity:.45;transform:translateY(4px)}to{opacity:1;transform:none}}
+.card,.panel,.settings-card,.integration-card,.product-card,.chat-card,.board-column,.dashboard-card{border-radius:18px!important;box-shadow:var(--i360-shadow);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.card:hover,.settings-card:hover,.integration-card:hover,.product-card:hover,.dashboard-card:hover{transform:translateY(-2px);box-shadow:var(--i360-shadow-hover)}
+button{transition:transform .16s ease,box-shadow .16s ease,filter .16s ease}
+button:hover{filter:brightness(1.015)}
+button:active{transform:translateY(1px)}
+input,select,textarea{border-radius:12px!important;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#8b5cf6!important;box-shadow:0 0 0 3px rgba(124,58,237,.12)!important}
+.nav-item{border-radius:12px;margin:3px 8px;transition:background .16s ease,color .16s ease,transform .16s ease}
+.nav-item:hover{transform:translateX(2px)}
+.nav-item.active{box-shadow:inset 3px 0 0 var(--i360-purple),0 6px 18px rgba(124,58,237,.10)}
+.product-form-heading{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(124,58,237,.16),rgba(37,99,235,.10) 55%,rgba(8,145,178,.09));box-shadow:0 12px 30px rgba(124,58,237,.10)}
+.product-form-heading:after{content:"";position:absolute;width:180px;height:180px;border-radius:50%;right:-80px;top:-100px;background:rgba(255,255,255,.25);pointer-events:none}
+.product-config-section{box-shadow:0 7px 24px rgba(15,23,42,.055);background:rgba(255,255,255,.68);backdrop-filter:blur(4px)}
+.product-section-title{letter-spacing:.15px}
+.seller-title{background:linear-gradient(135deg,rgba(124,58,237,.16),rgba(167,139,250,.05))}
+.first-title{background:linear-gradient(135deg,rgba(14,165,233,.16),rgba(56,189,248,.05))}
+.content-title{background:linear-gradient(135deg,rgba(20,184,166,.15),rgba(45,212,191,.05))}
+.sequence-step{box-shadow:0 6px 18px rgba(15,23,42,.045);transition:transform .16s ease,box-shadow .16s ease}
+.sequence-step:hover{transform:translateY(-1px);box-shadow:0 10px 25px rgba(15,23,42,.08)}
+.sequence-number{box-shadow:0 5px 12px rgba(15,118,110,.20)}
+.sequence-add-btn{transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease,background .16s ease}
+.sequence-add-btn:hover{transform:translateY(-2px);box-shadow:0 8px 18px rgba(15,23,42,.08);background:#fff}
+.integration-card-groq,.integration-card-openai,.integration-card-deepseek,.integration-card-voice,.integration-card-dropi,.integration-card-skydropx{border-top-width:5px!important}
+.status-badge,.badge,.tag{border-radius:999px!important;font-weight:700}
+.toast,.notification,.alert{border-radius:14px!important;box-shadow:0 14px 32px rgba(15,23,42,.12)!important}
+@media(max-width:860px){body{background:var(--bg-secondary,#f8fafc)}.card,.panel,.settings-card,.integration-card,.product-card{box-shadow:0 8px 24px rgba(15,23,42,.07)}}
+
+
+/* 1.31.5 — botones interactivos del primer contacto */
+.sequence-buttons-fields { display:flex; flex-direction:column; gap:12px; margin-top:10px; }
+.fc-button-config { padding:12px; border:1px solid rgba(99,102,241,.18); border-radius:14px; background:linear-gradient(180deg,#fff,#f8fafc); box-shadow:0 4px 14px rgba(15,23,42,.05); }
+.fc-button-row { display:flex; align-items:center; gap:8px; }
+.fc-button-icon { font-size:18px; }
+.fc-button-input { flex:1; }
+.fc-button-response { width:100%; margin-top:8px; resize:vertical; box-sizing:border-box; }
