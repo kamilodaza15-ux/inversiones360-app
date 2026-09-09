@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.32.4';
+const CURRENT_VERSION = '1.32.5';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1768,19 +1768,75 @@ async function getSkydropxDefaultAddressTemplate(cfg) {
       name: x?.attributes?.name || x?.name || x?.address?.name || '',
       alias: x?.attributes?.alias_name || x?.alias_name || '',
       address: x?.address || x?.attributes?.address || null,
+      raw: x,
     })).filter((x) => x.id);
-    return normalized.find((x) => x.default) || normalized[0] || null;
+
+    const selected = normalized.find((x) => x.default) || normalized[0] || null;
+    if (!selected) return null;
+
+    // La lista de address_templates puede devolver solo datos resumidos.
+    // Consultamos el detalle para recuperar TODOS los campos de la bodega
+    // (country_code, postal_code, ciudad, teléfono, email, referencia, etc.).
+    try {
+      const detail = await skydropxRequest(cfg, `/api/v1/address_templates/${encodeURIComponent(selected.id)}`);
+      const detailData = detail?.data || detail;
+      const attrs = detailData?.attributes || detailData?.address || detailData || {};
+      selected.address = {
+        ...(selected.address || {}),
+        ...attrs,
+      };
+      selected.name = selected.name || attrs.name || '';
+    } catch (detailError) {
+      console.warn(`No se pudo consultar el detalle de la dirección Skydropx ${selected.id}; se usará la información resumida disponible:`, detailError.message);
+    }
+
+    return selected;
   } catch (e) {
     console.warn('No se pudo consultar la dirección guardada de Skydropx; se usará la dirección configurada en la app:', e.message);
     return null;
   }
 }
 
+function normalizeSkydropxOriginAddress(address) {
+  const a = address || {};
+  return {
+    country_code: String(a.country_code || 'CO').trim(),
+    postal_code: String(a.postal_code || '').trim(),
+    area_level1: String(a.area_level1 || '').trim(),
+    area_level2: String(a.area_level2 || '').trim(),
+    ...(a.area_level3 ? { area_level3: String(a.area_level3).trim() } : {}),
+    street1: String(a.street1 || '').trim(),
+    name: String(a.name || '').trim(),
+    company: String(a.company || '').trim(),
+    phone: String(a.phone || '').trim(),
+    email: String(a.email || '').trim(),
+    reference: String(a.reference || 'Sin referencia').trim(),
+  };
+}
+
 async function getSkydropxOriginForRequest(cfg) {
   const template = await getSkydropxDefaultAddressTemplate(cfg);
-  if (template?.id) return { template_id: template.id, template };
+  if (template?.id) {
+    const templateAddress = normalizeSkydropxOriginAddress(template.address);
+    const configuredAddress = getSkydropxOriginConfig(cfg);
+    // Enviamos el template_id Y los datos completos recuperados. Así el API
+    // puede usar la dirección verificada y, si el entorno no resuelve el
+    // template, tampoco recibe country_code/postal_code/ciudad vacíos.
+    const merged = {
+      ...configuredAddress,
+      ...templateAddress,
+    };
+    const missing = ['country_code', 'postal_code', 'area_level1', 'area_level2', 'street1', 'name', 'phone', 'email', 'reference']
+      .filter((key) => !String(merged[key] || '').trim());
+    if (missing.length) {
+      throw new Error(`La dirección predeterminada de Skydropx (${template.id}) está incompleta. Faltan: ${missing.join(', ')}.`);
+    }
+    return { template_id: template.id, address: merged, template };
+  }
+
   const address = getSkydropxOriginConfig(cfg);
-  const missing = ['street1', 'name', 'phone', 'email', 'reference'].filter((key) => !String(address[key] || '').trim());
+  const missing = ['country_code', 'postal_code', 'area_level1', 'area_level2', 'street1', 'name', 'phone', 'email', 'reference']
+    .filter((key) => !String(address[key] || '').trim());
   if (missing.length) {
     throw new Error(`No se encontró una dirección predeterminada de Skydropx y faltan datos de origen: ${missing.join(', ')}. Configura la dirección predeterminada en Skydropx o completa la dirección de origen en Configuración.`);
   }
@@ -1809,7 +1865,7 @@ async function quoteOrderWithSkydropx(order) {
   const originForRequest = await getSkydropxOriginForRequest(cfg);
   const quotationBody = {
     quotation: {
-      address_from: originForRequest.template_id ? { template_id: originForRequest.template_id } : originForRequest.address,
+      address_from: originForRequest.template_id ? { template_id: originForRequest.template_id, ...originForRequest.address } : originForRequest.address,
       address_to: {
         country_code: 'CO', postal_code: order.postalCode || '',
         area_level1: order.department || '', area_level2: order.city || '',
@@ -1970,7 +2026,7 @@ async function uploadOrderToSkydropx(order, options = {}) {
     shipment: {
       rate_id: rateId,
       unique_shipment: true,
-      address_from: originForShipment.template_id ? { template_id: originForShipment.template_id } : originForShipment.address,
+      address_from: originForShipment.template_id ? { template_id: originForShipment.template_id, ...originForShipment.address } : originForShipment.address,
       address_to: {
         country_code: 'CO',
         postal_code: order.postalCode || '',
