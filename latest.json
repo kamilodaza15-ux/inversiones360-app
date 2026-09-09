@@ -1,6 +1,6 @@
 {
-  "version": "1.27.6",
-  "notes": "Causa REAL del audio encontrada revisando un archivo real que falló: MiniMax mete una etiqueta gigante (más de 1.200 caracteres, un sello regulatorio chino con firmas digitales) dentro del audio, y esa etiqueta se copiaba tal cual al archivo final que se le mandaba a WhatsApp — muy probablemente lo que hacía que WhatsApp lo rechazara como 'dañado'. Se agrega '-map_metadata -1' para borrar toda esa metadata antes de enviar. Probado directamente contra un archivo real que había fallado, confirmado que limpia la etiqueta por completo.",
+  "version": "1.28.1",
+  "notes": "Corrección segura de entregas programadas: una entrega futura no crea la orden al programarse. La orden solo se crea después del recordatorio de 2 días y una confirmación afirmativa clara del cliente. Se conserva la optimización de tokens, el asistente por producto, la selección de herramientas y la corrección de audio de la 1.27.6. Se mantienen todos los archivos de actualización anteriores en el manifiesto.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
