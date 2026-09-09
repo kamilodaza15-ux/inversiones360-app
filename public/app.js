@@ -585,6 +585,8 @@ const STATUS_LABELS = Object.fromEntries(STATUS_COLUMNS.map((c) => [c.key, c]));
 const ORDER_STATUS_COLUMNS = [
   { key: 'pendiente', label: '🟡 Pendiente', color: '#f59e0b' },
   { key: 'confirmado', label: '✅ Confirmado', color: '#16a34a' },
+  { key: 'error_dropi', label: '❌ Error al subir a Dropi', color: '#dc2626' },
+  { key: 'error_skydropx', label: '❌ Error al subir a Skydropx', color: '#b91c1c' },
   { key: 'guia_generada', label: '📦 Guía generada', color: '#8b5cf6' },
   { key: 'en_camino', label: '🚚 En camino', color: '#0ea5e9' },
   { key: 'con_novedad', label: '⚠️ Con novedad', color: '#ef4444' },
@@ -1739,13 +1741,31 @@ document.getElementById('quoteSkydropxBtn').addEventListener('click', async () =
     const res = await fetch(`/api/orders/${editingOrderId}/quote-skydropx`, { method: 'POST' }).then((r) => r.json());
     if (!res.ok) throw new Error(res.error || 'No se pudo cotizar el flete.');
     const money = (v) => '$' + Number(v || 0).toLocaleString('es-CO');
+    const selectedId = res.selectedRate?.id || '';
     const rows = (res.rates || []).map((r, i) => `
-      <div class="skydropx-rate-row ${i === 0 ? 'best' : ''}">
-        <div><strong>${i === 0 ? '⭐ ' : ''}${escapeHtml(r.carrier || 'Transportadora')}</strong><small>${escapeHtml(r.service || 'Servicio de envío')}</small></div>
+      <button type="button" class="skydropx-rate-row ${i === 0 ? 'best' : ''} ${String(r.id) === String(selectedId) ? 'selected' : ''}" data-rate-id="${escapeHtml(r.id)}">
+        <div><strong>${i === 0 ? '⭐ ' : ''}${escapeHtml(r.carrier || 'Transportadora')}</strong><small>${escapeHtml(r.service || 'Servicio de envío')}${r.id ? ` · ${escapeHtml(r.id)}` : ''}</small></div>
         <strong>${money(r.total)}</strong>
-      </div>`).join('');
+      </button>`).join('');
     const credit = res.credits ? `<div class="skydropx-credit">💳 Saldo ${escapeHtml(res.credits.environment || res.environment || '')}: <strong>${money(res.credits.balance)} ${escapeHtml(res.credits.currency || '')}</strong></div>` : '';
-    box.innerHTML = `<div class="skydropx-quote-head"><strong>🚚 Cotización Skydropx</strong><span>${escapeHtml(res.environment || '')}</span></div>${credit}<div class="skydropx-rates">${rows}</div><div class="skydropx-quote-foot">⭐ La primera es la tarifa más económica disponible.</div>`;
+    const origin = res.origin ? `<div class="skydropx-quote-foot">📍 Origen: ${escapeHtml([res.origin.street, res.origin.city, res.origin.state].filter(Boolean).join(', '))}${res.origin.postalCode ? ` · CP ${escapeHtml(res.origin.postalCode)}` : ' · sin código postal de origen'}<br>📦 Paquete: ${escapeHtml(String(res.package?.weight ?? 1))} kg · ${escapeHtml(String(res.package?.length ?? 30))}×${escapeHtml(String(res.package?.width ?? 30))}×${escapeHtml(String(res.package?.height ?? 30))} cm</div>` : '';
+    box.innerHTML = `<div class="skydropx-quote-head"><strong>🚚 Cotización Skydropx</strong><span>${escapeHtml(res.environment || '')}</span></div>${credit}<div class="skydropx-rates">${rows}</div><div class="skydropx-quote-foot">⭐ La primera es la tarifa más económica disponible.<br>👆 Haz clic en una tarifa para seleccionarla.</div>${origin}`;
+    box.querySelectorAll('[data-rate-id]').forEach((el) => el.addEventListener('click', async () => {
+      const rateId = el.dataset.rateId;
+      statusEl.style.color = '';
+      statusEl.textContent = 'Seleccionando tarifa...';
+      try {
+        const selectedRes = await fetch(`/api/orders/${editingOrderId}/select-skydropx-rate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rateId }) }).then((r) => r.json());
+        if (!selectedRes.ok) throw new Error(selectedRes.error || 'No se pudo seleccionar la tarifa.');
+        box.querySelectorAll('[data-rate-id]').forEach((b) => b.classList.toggle('selected', String(b.dataset.rateId) === String(rateId)));
+        statusEl.style.color = '#16a34a';
+        statusEl.textContent = `✔ Tarifa seleccionada: ${selectedRes.selectedRate?.carrier || ''} — ${money(selectedRes.selectedRate?.total)}`;
+        loadOrders();
+      } catch (e) {
+        statusEl.style.color = '#dc2626';
+        statusEl.textContent = e.message;
+      }
+    }));
     box.style.display = 'block';
     statusEl.style.color = '#16a34a';
     statusEl.textContent = `✔ ${res.rates.length} tarifa(s) encontradas`;
