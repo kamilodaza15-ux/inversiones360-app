@@ -97,8 +97,18 @@
             <label>Mensaje de bienvenida</label>
             <textarea id="cfg-welcomeMessage" rows="3"></textarea>
 
-            <label>Instrucciones de personalidad / venta</label>
-            <textarea id="cfg-baseInstructions" rows="5"></textarea>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:14px">
+              <input id="cfg-sellerMode" type="checkbox" style="width:auto" />
+              🛍️ Activar Modo Vendedor
+            </label>
+            <p class="hint small">Cuando está activo, Ángela aplica una capa adicional de venta: detecta necesidad, resuelve objeciones, presenta valor y facilita el cierre sin inventar beneficios ni urgencia.</p>
+
+            <label>Instrucciones generales del asistente / prompt maestro</label>
+            <textarea id="cfg-baseInstructions" rows="7"></textarea>
+
+            <label>🎯 Prompt de Primer contacto</label>
+            <textarea id="cfg-firstContactPrompt" rows="5" placeholder="Ej.: Saluda de forma cálida, identifica qué producto le interesa y haz una sola pregunta corta para iniciar la conversación."></textarea>
+            <p class="hint small">Este prompt solo se agrega al primer turno de cada cliente nuevo para ahorrar tokens en los mensajes siguientes.</p>
 
             <label>Segundos de espera antes de responder</label>
             <input id="cfg-responseDelaySeconds" type="number" min="0" max="60" />
@@ -388,6 +398,19 @@
 
               <label>Detalle completo (para que la IA venda bien este producto)</label>
               <textarea id="p-details" rows="6"></textarea>
+
+              <div style="margin-top:14px;padding:14px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-hover)">
+                <b>🤖 Asistente y venta de este producto</b>
+                <p class="hint small" style="margin:6px 0 10px">Elige si este producto usa las reglas generales de venta o un prompt exclusivo. El prompt exclusivo solo se carga cuando este producto está activo.</p>
+                <label>Modo de venta</label>
+                <select id="p-saleMode">
+                  <option value="general">🛍️ Modo Vendedor general</option>
+                  <option value="prompt">🎯 Asistente personalizado por producto</option>
+                </select>
+                <label style="margin-top:10px">Prompt específico de este producto</label>
+                <textarea id="p-assistantPrompt" rows="7" placeholder="Escribe aquí cómo quieres que Ángela venda SOLO este producto: enfoque, beneficios permitidos, objeciones, preguntas, cierre, tono, etc."></textarea>
+                <p class="hint small">Solo se utiliza cuando seleccionas “Asistente personalizado por producto”. No reemplaza las reglas obligatorias del sistema: las complementa.</p>
+              </div>
 
               <label>Imágenes del producto (puedes elegir varias)</label>
               <input id="p-images" type="file" accept="image/*" multiple />
