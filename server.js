@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.31.8';
+const CURRENT_VERSION = '1.31.9';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1194,14 +1194,69 @@ app.post('/api/orders', (req, res) => {
   if (order.clientJid) {
     updateClientStatus(order.clientJid, 'comprado', {});
   }
+
+  // Precarga la cotización para que el pedido aparezca con sus fletes listos
+  // cuando el usuario lo abra. No bloquea la creación del pedido: si Skydropx
+  // está lento o temporalmente fuera de servicio, el pedido igual se crea y
+  // podrá cotizarse manualmente después.
+  setImmediate(async () => {
+    try {
+      const quote = await quoteOrderWithSkydropx(order);
+      let credits = null;
+      try { credits = await getSkydropxCredits(); } catch (_) {}
+      const safeRates = quote.rates.map(({ raw, ...r }) => r);
+      updateOrder(order.id, {
+        skydropxQuotationId: quote.quotationId,
+        skydropxRates: safeRates,
+        skydropxQuoteUpdatedAt: Date.now(),
+        skydropxEnvironment: quote.environment,
+        skydropxCredits: credits,
+        skydropxStatus: 'cotizado',
+      });
+    } catch (e) {
+      console.warn(`No se pudo precargar la cotización Skydropx del pedido ${order.id}:`, e.message);
+      updateOrder(order.id, { skydropxStatus: 'error_cotizacion', skydropxQuoteError: e.message });
+    }
+  });
+
   res.json(order);
 });
 
 app.put('/api/orders/:id', async (req, res) => {
   const existingOrder = orders.find((o) => o.id === req.params.id);
   const wasPending = existingOrder?.status === 'pendiente';
+  const changedQuoteFields = ['product', 'quantity', 'price', 'address', 'department', 'city', 'neighborhood', 'deliveryType', 'clientName', 'clientPhone', 'postalCode'].some((k) => Object.prototype.hasOwnProperty.call(req.body, k));
   const order = updateOrder(req.params.id, req.body);
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+  if (changedQuoteFields) {
+    // La dirección/precio/producto cambió: la cotización anterior ya no es
+    // confiable. Se limpia la selección y se precarga una nueva.
+    updateOrder(order.id, {
+      skydropxQuotationId: '', skydropxRates: [], skydropxQuoteUpdatedAt: null,
+      skydropxSelectedRateId: '', skydropxSelectedRate: null, skydropxStatus: 'cotizando',
+      skydropxQuoteError: '',
+    });
+    setImmediate(async () => {
+      try {
+        const fresh = await quoteOrderWithSkydropx(order);
+        let credits = null;
+        try { credits = await getSkydropxCredits(); } catch (_) {}
+        updateOrder(order.id, {
+          skydropxQuotationId: fresh.quotationId,
+          skydropxRates: fresh.rates.map(({ raw, ...r }) => r),
+          skydropxQuoteUpdatedAt: Date.now(),
+          skydropxEnvironment: fresh.environment,
+          skydropxCredits: credits,
+          skydropxStatus: 'cotizado',
+          skydropxQuoteError: '',
+        });
+      } catch (e) {
+        updateOrder(order.id, { skydropxStatus: 'error_cotizacion', skydropxQuoteError: e.message });
+        console.warn(`No se pudo actualizar la cotización Skydropx del pedido ${order.id}:`, e.message);
+      }
+    });
+  }
 
   // Si el cambio de estado (manual, desde el panel) sacó el pedido de
   // "Pendiente" hacia cualquier otro estado que no sea "Cancelado", se manda
@@ -1765,87 +1820,46 @@ async function uploadOrderToSkydropx(order) {
   const catalogProduct = findProductByQuery(order.product);
   const skydropxDims = await getSkydropxProductDimensions(cfg, catalogProduct?.skydropxProductId);
 
-  // ---- Paso 1: cotizar ----
-  const declaredAmount = Number(String(order.price || '').replace(/[^\d.]/g, '')) || 0;
+  const declaredAmount = Number(String(order.price || '').replace(/[^\d]/g, '')) || 0;
   if (!declaredAmount) {
     throw new Error('El pedido no tiene un precio válido para el valor declarado de Skydropx.');
   }
 
-  const quotationBody = {
-    quotation: {
-      address_from: {
-        country_code: 'CO',
-        postal_code: cfg.skydropxOriginPostalCode || '',
-        area_level1: cfg.skydropxOriginState || '',
-        area_level2: cfg.skydropxOriginCity || '',
-        street1: cfg.skydropxOriginStreet,
-        name: cfg.skydropxOriginName,
-        company: cfg.companyName || '',
-        phone: cfg.skydropxOriginPhone || '',
-        email: cfg.skydropxOriginEmail || '',
-        reference: cfg.skydropxOriginReference || 'Sin referencia',
-      },
-      address_to: {
-        country_code: 'CO',
-        postal_code: order.postalCode || '',
-        area_level1: order.department || '',
-        area_level2: order.city || '',
-        street1: order.address || order.city || '',
-        name: order.clientName || 'Cliente',
-        phone: order.clientPhone || '',
-        email: 'cliente@example.com',
-        reference: order.neighborhood || 'Sin referencia',
-      },
-      parcels: [
-        {
-          weight: skydropxDims?.weight || Number(cfg.skydropxDefaultWeightKg) || 1,
-          length: skydropxDims?.length || Number(cfg.skydropxDefaultLengthCm) || 20,
-          width: skydropxDims?.width || Number(cfg.skydropxDefaultWidthCm) || 20,
-          height: skydropxDims?.height || Number(cfg.skydropxDefaultHeightCm) || 10,
-          quantity: 1,
-          declared_amount: declaredAmount,
-          package_content: String(order.product || catalogProduct?.name || 'Producto').slice(0, 200),
-          package_type: 'package',
-          dimension_unit: 'CM',
-          mass_unit: 'KG',
-        },
-      ],
-      cash_on_delivery: true,
-      recipient_pays_shipping: false,
-    },
-  };
+  // ---- Paso 1: usar la cotización/transportadora seleccionada ----
+  // La cotización se genera al crear/actualizar el pedido. Si el usuario
+  // seleccionó una tarifa, se respeta exactamente esa tarifa y no se vuelve
+  // a escoger automáticamente otra. Si no hay cotización guardada (por un
+  // pedido antiguo), se hace una cotización de respaldo.
+  let rates = Array.isArray(order.skydropxRates) ? order.skydropxRates : [];
+  let quotationId = order.skydropxQuotationId || '';
 
-  const quotationRes = await skydropxRequest(cfg, '/api/v1/quotations', {
-    method: 'POST',
-    body: JSON.stringify(quotationBody),
-  });
-  const quotationId = quotationRes?.id || quotationRes?.data?.id || quotationRes?.data?.data?.id || quotationRes?.quotation?.id;
-  if (!quotationId) {
-    throw new Error('Skydropx no devolvió un id de cotización.');
+  if (!rates.length || !quotationId) {
+    const quote = await quoteOrderWithSkydropx(order);
+    rates = quote.rates.map(({ raw, ...r }) => r);
+    quotationId = quote.quotationId;
+    let credits = null;
+    try { credits = await getSkydropxCredits(); } catch (_) {}
+    updateOrder(order.id, {
+      skydropxQuotationId: quotationId,
+      skydropxRates: rates,
+      skydropxQuoteUpdatedAt: Date.now(),
+      skydropxEnvironment: quote.environment,
+      skydropxCredits: credits,
+      skydropxStatus: 'cotizado',
+    });
   }
 
-  // ---- Paso 2: la cotización se completa de a poco — se revisa unas veces, esperando un poco entre cada una ----
-  let quotationData = quotationRes;
-  for (let i = 0; i < 6; i++) {
-    const isCompleted = quotationData?.is_completed === true || quotationData?.data?.attributes?.status === 'completed';
-    if (isCompleted) break;
-    await sleep(2000);
-    quotationData = await skydropxRequest(cfg, `/api/v1/quotations/${quotationId}`);
+  let bestRate = null;
+  if (order.skydropxSelectedRateId) {
+    bestRate = rates.find((r) => String(r.id) === String(order.skydropxSelectedRateId)) || null;
+    if (!bestRate) {
+      throw new Error('La tarifa seleccionada ya no está en la cotización guardada. Vuelve a cotizar el flete y selecciona una tarifa.');
+    }
   }
 
-  const rates = Array.isArray(quotationData?.rates)
-    ? quotationData.rates.filter((r) => r?.success)
-    : (quotationData?.included || [])
-        .filter((item) => item.type === 'rate' && item.attributes?.success)
-        .map((item) => ({ id: item.id, ...item.attributes }));
-  if (rates.length === 0) {
-    throw new Error('Skydropx no encontró ninguna tarifa disponible para esta dirección.');
-  }
-
-  // REGLA DE NEGOCIO: a oficina, SIEMPRE Interrápidísimo (sin importar el
-  // precio) — a domicilio, la tarifa más barata entre todas las que sirvieron.
-  let bestRate;
-  if (order.deliveryType === 'oficina') {
+  // Si todavía no hay selección, mantenemos el comportamiento anterior:
+  // domicilio usa la más económica; oficina prioriza Interrápidísimo.
+  if (!bestRate && order.deliveryType === 'oficina') {
     const carrierText = (r) => [
       r?.provider_name, r?.carrier_name, r?.provider_display_name, r?.attributes?.provider_name,
       r?.attributes?.carrier_name, r?.attributes?.provider_display_name
@@ -1853,12 +1867,12 @@ async function uploadOrderToSkydropx(order) {
     bestRate = rates.find((r) => {
       const name = carrierText(r);
       return name.includes('interrapidisimo') || name.includes('inter rapidisimo');
-    });
+    }) || null;
     if (!bestRate) {
-      const carriers = [...new Set(rates.map((r) => carrierText(r)).filter(Boolean))].slice(0, 8);
-      throw new Error('Este pedido es para recogida en oficina, pero Skydropx no ofreció ninguna tarifa de Interrápidísimo para esta dirección. Tarifas recibidas: ' + (carriers.join(' | ') || 'ninguna'));
+      throw new Error('Este pedido es para recogida en oficina, pero no hay una tarifa de Interrápidísimo disponible en la cotización guardada.');
     }
-  } else {
+  }
+  if (!bestRate) {
     bestRate = rates.reduce((a, b) => (Number(a.total ?? a.attributes?.total) <= Number(b.total ?? b.attributes?.total) ? a : b));
   }
 
@@ -1936,7 +1950,10 @@ async function uploadOrderToSkydropx(order) {
 
   await markOrderConfirmedAndNotify(order.id, {
     skydropxShipmentId: shipmentId,
-    transportadora: bestRate.provider_display_name || bestRate.provider_name || bestRate.attributes?.provider_display_name || bestRate.attributes?.provider_name || '',
+    skydropxStatus: 'enviado',
+    skydropxSelectedRateId: rateId,
+    skydropxSelectedRate: bestRate,
+    transportadora: bestRate.carrier || bestRate.provider_display_name || bestRate.provider_name || bestRate.attributes?.provider_display_name || bestRate.attributes?.provider_name || '',
   });
   return shipmentRes.data;
 }
@@ -2012,10 +2029,51 @@ app.post('/api/orders/:id/quote-skydropx', async (req, res) => {
     const quote = await quoteOrderWithSkydropx(order);
     let credits = null;
     try { credits = await getSkydropxCredits(); } catch (e) { console.warn('No se pudo consultar saldo Skydropx:', e.message); }
-    res.json({ ok: true, quotationId: quote.quotationId, rates: quote.rates.map(({raw, ...r}) => r), credits, environment: quote.environment });
+
+    // Guardamos la cotización en el pedido. Así el panel puede mostrarla
+    // inmediatamente y también podemos usar después el rate que el usuario
+    // seleccione, sin volver a cotizar al subir.
+    const safeRates = quote.rates.map(({ raw, ...r }) => r);
+    const currentSelected = order.skydropxSelectedRateId
+      ? safeRates.find((r) => r.id === order.skydropxSelectedRateId)
+      : null;
+    const selected = currentSelected || null;
+    updateOrder(order.id, {
+      skydropxQuotationId: quote.quotationId,
+      skydropxRates: safeRates,
+      skydropxQuoteUpdatedAt: Date.now(),
+      skydropxSelectedRateId: selected?.id || '',
+      skydropxSelectedRate: selected || null,
+      skydropxEnvironment: quote.environment,
+      skydropxCredits: credits,
+      skydropxStatus: 'cotizado',
+    });
+    const saved = orders.find((o) => o.id === order.id);
+    res.json({ ok: true, quotationId: quote.quotationId, rates: safeRates, selectedRate: selected, credits, environment: quote.environment, order: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// Selecciona explícitamente una tarifa ya cotizada. Al subir el pedido se
+// utilizará exactamente este rate_id; nunca se vuelve a escoger otra tarifa
+// automáticamente.
+app.post('/api/orders/:id/select-skydropx-rate', async (req, res) => {
+  const order = orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+  const rateId = String(req.body?.rateId || '').trim();
+  if (!rateId) return res.status(400).json({ error: 'Falta el rateId de la tarifa seleccionada.' });
+  const rates = Array.isArray(order.skydropxRates) ? order.skydropxRates : [];
+  const selected = rates.find((r) => String(r.id) === rateId);
+  if (!selected) return res.status(400).json({ error: 'La tarifa seleccionada no pertenece a la cotización guardada de este pedido. Vuelve a cotizar el flete.' });
+
+  updateOrder(order.id, {
+    skydropxSelectedRateId: selected.id,
+    skydropxSelectedRate: selected,
+    transportadora: selected.carrier || order.transportadora || '',
+    skydropxStatus: 'tarifa_seleccionada',
+  });
+  res.json({ ok: true, selectedRate: selected, order: orders.find((o) => o.id === order.id) });
 });
 
 app.get('/api/skydropx/credits', async (req, res) => {
@@ -3926,6 +3984,15 @@ function createOrder(fields) {
     rawSummary: fields.rawSummary || '',
     dropiStatus: null,
     skydropxStatus: null,
+    // Cotización Skydropx precargada para que aparezca en el pedido sin
+    // esperar una nueva consulta al abrirlo.
+    skydropxQuotationId: fields.skydropxQuotationId || '',
+    skydropxRates: Array.isArray(fields.skydropxRates) ? fields.skydropxRates : [],
+    skydropxQuoteUpdatedAt: fields.skydropxQuoteUpdatedAt || null,
+    skydropxSelectedRateId: fields.skydropxSelectedRateId || '',
+    skydropxSelectedRate: fields.skydropxSelectedRate || null,
+    skydropxEnvironment: fields.skydropxEnvironment || '',
+    skydropxCredits: fields.skydropxCredits || null,
     possibleDuplicateOf: fields.possibleDuplicateOf || null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
