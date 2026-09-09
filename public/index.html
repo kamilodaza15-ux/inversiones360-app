@@ -349,7 +349,7 @@
           </div>
 
           <div class="card collapsible-card" id="productFormCard">
-            <h2 id="formTitle">➕ Agregar producto</h2>
+            <div class="product-form-heading"><div><span class="product-form-kicker">CATÁLOGO</span><h2 id="formTitle">➕ Agregar producto</h2><p>Configura el producto, su vendedor y su primer contacto sin tocar los demás productos.</p></div><span class="product-form-icon">🛍️</span></div>
             <form id="productForm">
               <input type="hidden" id="p-id" />
               <label>Nombre del producto</label>
@@ -388,54 +388,70 @@
 
               <label>Detalle completo (para que la IA venda bien este producto)</label>
               <textarea id="p-details" rows="6"></textarea>
-              <details open style="margin-top:14px;border:1px solid #7c3aed;border-radius:14px;background:linear-gradient(180deg,rgba(124,58,237,.08),var(--bg-hover));overflow:hidden">
-                <summary style="cursor:pointer;padding:13px 15px;font-weight:800;color:#6d28d9">🛍️ MODO VENDEDOR DE ESTE PRODUCTO</summary>
-                <div style="padding:0 15px 15px">
-                  <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border-radius:12px;background:var(--bg-input);border:1px solid var(--border-color)">
-                    <span><b>Activar Modo Vendedor</b><br><span class="hint small">Controla solo este producto.</span></span>
-                    <span style="display:flex;align-items:center;gap:8px"><span id="p-sellerModeLabel" style="font-weight:800;color:#dc2626">DESACTIVADO</span><input id="p-sellerModeEnabled" type="checkbox" style="width:24px;height:24px;accent-color:#16a34a" /></span>
-                  </label>
-                  <label style="margin-top:12px">Tipo de asistente de venta</label>
+              <div class="product-config-section seller-config-section">
+                <div class="product-section-title seller-title">🛍️ MODO VENDEDOR <span>de este producto</span></div>
+                <div class="product-toggle-row">
+                  <div><b>Activar Modo Vendedor</b><small>Solo afecta a este producto.</small></div>
+                  <div class="switch-wrap"><span id="p-sellerModeLabel" class="switch-status off">DESACTIVADO</span><label class="switch"><input id="p-sellerModeEnabled" type="checkbox"><span class="slider"></span></label></div>
+                </div>
+                <div id="p-sellerModeOptions" class="seller-options">
+                  <label>Tipo de asistente</label>
                   <select id="p-saleMode">
                     <option value="general">🛍️ Modo vendedor — sin prompt personalizado</option>
                     <option value="prompt">🎯 Modo vendedor — con prompt personalizado</option>
                   </select>
-                  <div id="p-customPromptBox" style="display:none;margin-top:10px;padding:12px;border:1px solid #a78bfa;border-radius:12px;background:rgba(139,92,246,.06)">
-                    <label style="color:#6d28d9;font-weight:700">🎯 Prompt y reglas de venta de este producto</label>
-                    <textarea id="p-assistantPrompt" rows="8" placeholder="Escribe las reglas específicas: enfoque de venta, beneficios permitidos, objeciones, preguntas, cierres, tono, cosas que debe evitar, etc."></textarea>
-                    <p class="hint small">Este prompt se usa únicamente cuando el Modo Vendedor está activado y eliges “con prompt”. Las reglas obligatorias del sistema siempre tienen prioridad.</p>
+                  <div id="p-customPromptBox" class="custom-prompt-box">
+                    <label>🎯 Prompt y reglas de este producto</label>
+                    <textarea id="p-assistantPrompt" rows="7" placeholder="Escribe reglas específicas de venta, beneficios, objeciones, tono, preguntas, cierres y cosas que debe evitar."></textarea>
+                    <p class="hint small">Complementa las reglas obligatorias del sistema. El sistema siempre tiene prioridad.</p>
                   </div>
                 </div>
-              </details>
+              </div>
 
-              <details style="margin-top:10px;border:1px solid #0ea5e9;border-radius:14px;background:linear-gradient(180deg,rgba(14,165,233,.08),var(--bg-hover));overflow:hidden">
-                <summary style="cursor:pointer;padding:13px 15px;font-weight:800;color:#0369a1">👋 PRIMER CONTACTO DEL PRODUCTO</summary>
-                <div style="padding:0 15px 15px">
-                  <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border-radius:12px;background:var(--bg-input);border:1px solid var(--border-color)">
-                    <span><b>Activar primer contacto</b><br><span class="hint small">Se dispara cuando se detecta este producto en una entrada nueva/publicitaria.</span></span>
-                    <input id="p-firstContactEnabled" type="checkbox" style="width:24px;height:24px;accent-color:#0284c7" />
-                  </label>
-                  <label style="margin-top:12px">Mensaje inicial</label>
-                  <textarea id="p-firstContactMessage" rows="5" placeholder="Ej.: ¡Hola! 😊 Vi que estás interesado en nuestro Serum... ¿Quieres que te cuente cómo funciona?"></textarea>
-                  <label style="margin-top:10px">Imágenes del primer contacto (máximo 2)</label>
-                  <input id="p-firstContactImages" type="file" accept="image/*" multiple />
-                  <p class="hint small" id="p-firstContactCurrent">Las imágenes se envían junto con el mensaje inicial. Solo se dispara una vez por producto y cliente.</p>
+              <div class="product-config-section first-contact-section">
+                <div class="product-section-title first-title">👋 PRIMER CONTACTO <span>de este producto</span></div>
+                <div class="product-toggle-row">
+                  <div><b>Activar primer contacto</b><small>Arma una secuencia personalizada que se envía una sola vez por producto y cliente.</small></div>
+                  <div class="switch-wrap"><span id="p-firstContactLabel" class="switch-status off">DESACTIVADO</span><label class="switch"><input id="p-firstContactEnabled" type="checkbox"><span class="slider"></span></label></div>
                 </div>
-              </details>
 
-              <details style="margin-top:10px;border:1px solid var(--border-color);border-radius:14px;background:var(--bg-hover);overflow:hidden">
-                <summary style="cursor:pointer;padding:13px 15px;font-weight:800">🖼️ FOTOS, VIDEO Y BANCO DE CONTENIDO</summary>
-                <div style="padding:0 15px 15px">
-                  <label>Imágenes generales del producto (puedes elegir varias)</label>
-                  <input id="p-images" type="file" accept="image/*" multiple />
-                  <p class="hint small">Después puedes abrir 🖼️ Fotos en la lista del producto y asignar a cada imagen su regla: modo de uso, precio, empaque, beneficios, etc.</p>
-
-              <label>Video del producto (opcional, uno solo)</label>
-              <input id="p-video" type="file" accept="video/*" />
-              <p class="hint small" id="p-video-current"></p>
-              <p class="hint small">Si el cliente pide "video", "demostración" o "cómo funciona", Ángela lo envía. Usa clips cortos (máx. ~50 MB) para que se envíe rápido por WhatsApp.</p>
+                <div id="firstContactBuilder" class="first-contact-builder">
+                  <div class="builder-help">Configura <b>solo los pasos que quieras</b>. Puedes tener 1, 2, 3 o más. Cada pieza se puede subir, bajar o eliminar.</div>
+                  <div id="firstContactSequenceList" class="sequence-list"></div>
+                  <div class="sequence-add-buttons">
+                    <button type="button" class="sequence-add-btn text" data-add-fc="text">＋ 📝 Texto</button>
+                    <button type="button" class="sequence-add-btn media" data-add-fc="image">＋ 🖼️ Foto</button>
+                    <button type="button" class="sequence-add-btn media" data-add-fc="video">＋ 🎥 Video</button>
+                    <button type="button" class="sequence-add-btn media" data-add-fc="audio">＋ 🎵 Audio</button>
+                    <button type="button" class="sequence-add-btn question" data-add-fc="question">＋ ❓ Pregunta</button>
+                    <button type="button" class="sequence-add-btn buttons" data-add-fc="buttons">＋ 🔘 Respuestas</button>
+                  </div>
+                  <p class="hint small">La IA toma el control después de terminar la secuencia. Si desactivas Primer contacto, no se envía ningún paso.</p>
                 </div>
-              </details>
+              </div>
+
+              <div class="product-config-section content-section">
+                <div class="product-section-title content-title">🖼️ FOTOS, VIDEO Y BANCO DE CONTENIDO</div>
+                <div class="content-grid">
+                  <div class="content-card">
+                    <div class="content-card-head">📸 Fotos generales</div>
+                    <label>Sube las fotos del producto</label>
+                    <input id="p-images" type="file" accept="image/*" multiple />
+                    <p class="hint small">Luego abre 🖼️ Fotos en el producto para asignar reglas como <b>modo de uso</b>, beneficios, empaque o precio.</p>
+                  </div>
+                  <div class="content-card">
+                    <div class="content-card-head">🎥 Video general</div>
+                    <label>Video del producto</label>
+                    <input id="p-video" type="file" accept="video/*" />
+                    <p class="hint small" id="p-video-current"></p>
+                    <p class="hint small">Si el cliente pide video, demostración o cómo funciona, Ángela puede enviarlo automáticamente.</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Campos heredados: se mantienen para compatibilidad con productos antiguos. -->
+              <input id="p-firstContactMessage" type="hidden" />
+              <input id="p-firstContactImages" type="file" accept="image/*" multiple hidden />
 
               <button type="submit" class="save-btn">Guardar producto</button>
               <button type="button" id="cancelEditBtn" class="cancel-btn" style="display:none">Cancelar edición</button>
