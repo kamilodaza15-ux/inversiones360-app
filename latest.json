@@ -1,6 +1,6 @@
 {
   "version": "1.32.0",
-  "notes": "Versión consolidada: conserva todas las funciones anteriores. Corrige el guardado de datos cuando la ubicación llega inválida o como texto combinado (por ejemplo, Palmira Valle del Cauca), sin perder nombre, dirección, teléfono ni cantidad. Al crear un pedido desde la ficha del cliente, el precio ahora se calcula como TOTAL: si existe una oferta exacta por cantidad se usa su total; si no existe, precio unitario x cantidad. Skydropx usa paquete estándar de 1 kg y 30x30x30 cm sin depender de productos creados en Skydropx; domicilio automático selecciona la tarifa más económica y oficina selecciona Interrapidísimo; la subida manual exige seleccionar una tarifa. Los errores reales de subida pasan a Error al subir a Dropi o Error al subir a Skydropx y aparecen como filtros. Si se detecta un producto sin Primer contacto activo se envía una sola vez su primera imagen principal. Se mantiene la navegación Pedido ↔ Chat y la función existente de copiar/exportar chat sin cambios.",
+  "notes": "Versión 1.32.0 consolidada: pedidos calculan el total según cantidad/oferta; Skydropx usa paquete estándar 1 kg y 30x30x30 cm; usa la dirección predeterminada guardada en Skydropx mediante template_id cuando está disponible, evitando exigir el email de origen en cada solicitud; cotización visible automáticamente al abrir el pedido; selección manual de tarifa y subida manual cuando la subida automática está apagada; modo automático aplica domicilio=tarifa más económica y oficina=Interrapidísimo; errores de subida pasan a filtros de error; ficha de pedido más amplia y navegación Pedido↔Chat mejor ubicada; se conserva copiar/exportar chat sin cambios.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
@@ -10,5 +10,7 @@
     "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js",
     "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
   },
-  "newDependencies": ["@ffprobe-installer/ffprobe"]
+  "newDependencies": [
+    "@ffprobe-installer/ffprobe"
+  ]
 }
