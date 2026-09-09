@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.28.1';
+const CURRENT_VERSION = '1.29.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -450,7 +450,12 @@ function writeConfig(cfg) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
 function readProducts() {
-  return JSON.parse(fs.readFileSync(PRODUCTS_PATH, 'utf8'));
+  const products = JSON.parse(fs.readFileSync(PRODUCTS_PATH, 'utf8'));
+  return products.map((p) => ({
+    ...p,
+    saleMode: p.saleMode || p.salesMode || p.assistantMode || p.modoVenta || 'general',
+    assistantPrompt: p.assistantPrompt || '',
+  }));
 }
 function writeProducts(products) {
   fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(products, null, 2));
@@ -607,6 +612,8 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
     dropiProductId: req.body.dropiProductId || '',
     skydropxProductId: req.body.skydropxProductId || '',
     quantityOffers,
+    saleMode: req.body.saleMode || 'general',
+    assistantPrompt: req.body.assistantPrompt || '',
     images: (files.images || []).map((f) => `/media/${f.filename}`),
     video: (files.video || [])[0] ? `/media/${files.video[0].filename}` : '',
   };
@@ -639,6 +646,8 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
     dropiProductId: req.body.dropiProductId ?? (existing.dropiProductId || ''),
     skydropxProductId: req.body.skydropxProductId ?? (existing.skydropxProductId || ''),
     quantityOffers,
+    saleMode: req.body.saleMode ?? (existing.saleMode || 'general'),
+    assistantPrompt: req.body.assistantPrompt ?? (existing.assistantPrompt || ''),
     keywords:
       req.body.keywords !== undefined
         ? req.body.keywords.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean)
@@ -1413,64 +1422,100 @@ async function skydropxLogin(cfg) {
   if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
     throw new Error('Falta configurar el Client ID y Client Secret de Skydropx en Configuración.');
   }
+
+  const endpoint = `${skydropxBaseUrl(cfg)}/api/v1/oauth/token`;
+  const form = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: String(cfg.skydropxClientId).trim(),
+    client_secret: String(cfg.skydropxClientSecret).trim(),
+  });
+
   let res;
   try {
-    res = await fetch(`${skydropxBaseUrl(cfg)}/api/v1/oauth/token`, {
+    // Skydropx documenta el OAuth client_credentials como
+    // application/x-www-form-urlencoded. No enviar JSON aquí.
+    res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'client_credentials',
-        client_id: cfg.skydropxClientId,
-        client_secret: cfg.skydropxClientSecret,
-      }),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      body: form.toString(),
     });
   } catch (e) {
-    throw new Error(`No se pudo conectar con Skydropx — revisa tu conexión a internet. Detalle: ${e.message}`);
+    const cause = e?.cause;
+    const detail = [
+      e?.message,
+      cause?.code ? `código=${cause.code}` : '',
+      cause?.message && cause.message !== e?.message ? `causa=${cause.message}` : '',
+    ].filter(Boolean).join(' | ');
+    throw new Error(`No se pudo conectar con Skydropx (${endpoint}). Detalle: ${detail || 'error de red desconocido'}`);
   }
+
   const text = await res.text();
   let data;
   try {
     data = JSON.parse(text);
   } catch (e) {
-    throw new Error(`Skydropx respondió algo inesperado (código ${res.status}), no fue posible leerlo. Detalle: ${text.slice(0, 150)}`);
+    throw new Error(`Skydropx respondió algo inesperado (HTTP ${res.status}). Detalle: ${text.slice(0, 200)}`);
   }
-  if (!data.access_token) {
-    throw new Error(data.error_description || data.error || 'Skydropx rechazó el inicio de sesión — revisa el Client ID y Client Secret.');
+
+  if (!res.ok || !data.access_token) {
+    const detail = data.error_description || data.error || `HTTP ${res.status}`;
+    throw new Error(`Skydropx no autorizó la conexión: ${detail}`);
   }
+
   skydropxTokenCache = data.access_token;
-  // Restamos 2 minutos de margen, para nunca usar un token a punto de vencer.
-  skydropxTokenExpiresAt = Date.now() + (data.expires_in - 120) * 1000;
+  const expiresIn = Math.max(60, Number(data.expires_in) || 7200);
+  // Dejamos 2 minutos de margen para no usar un token a punto de vencer.
+  skydropxTokenExpiresAt = Date.now() + Math.max(60, expiresIn - 120) * 1000;
   return data.access_token;
 }
 
-async function skydropxRequest(cfg, path, options = {}) {
+async function skydropxRequest(cfg, path, options = {}, retry401 = true) {
   if (!skydropxTokenCache || Date.now() >= skydropxTokenExpiresAt) {
     await skydropxLogin(cfg);
   }
+
   let res;
   try {
     res = await fetch(`${skydropxBaseUrl(cfg)}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        Accept: 'application/json',
         Authorization: `Bearer ${skydropxTokenCache}`,
         ...(options.headers || {}),
       },
     });
   } catch (e) {
-    throw new Error(`No se pudo conectar con Skydropx — revisa tu conexión a internet. Detalle: ${e.message}`);
+    const cause = e?.cause;
+    const detail = [
+      e?.message,
+      cause?.code ? `código=${cause.code}` : '',
+      cause?.message && cause.message !== e?.message ? `causa=${cause.message}` : '',
+    ].filter(Boolean).join(' | ');
+    throw new Error(`No se pudo conectar con Skydropx (${skydropxBaseUrl(cfg)}${path}). Detalle: ${detail || 'error de red desconocido'}`);
   }
+
   const text = await res.text();
   let data;
   try {
     data = JSON.parse(text);
   } catch (e) {
-    throw new Error(`Skydropx respondió algo inesperado (código ${res.status}), no fue posible leerlo. Detalle: ${text.slice(0, 150)}`);
+    throw new Error(`Skydropx respondió algo inesperado (HTTP ${res.status}). Detalle: ${text.slice(0, 200)}`);
   }
-  if (res.status === 401) {
-    // Token vencido a mitad de camino — se reintenta una vez con uno nuevo.
+
+  if (res.status === 401 && retry401) {
+    // Token rechazado/vencido: limpiar caché, renovar y reintentar UNA sola vez.
+    skydropxTokenCache = null;
+    skydropxTokenExpiresAt = 0;
     await skydropxLogin(cfg);
-    return skydropxRequest(cfg, path, options);
+    return skydropxRequest(cfg, path, options, false);
+  }
+
+  if (!res.ok) {
+    throw new Error(data.error_description || data.error || data.message || `HTTP ${res.status}`);
   }
   if (data.error) {
     throw new Error(data.error_description || data.error);
@@ -2970,6 +3015,8 @@ function buildSystemPrompt(jid, overrideOrderData) {
   // reutilizar este mismo prompt sin tocar ningún cliente real.
   const client = jid ? clients.get(jid) : null;
   const orderData = overrideOrderData || client?.orderData || {};
+  const existingHistory = jid ? conversations.get(jid) : null;
+  const isFirstContact = !!jid && (!existingHistory || !existingHistory.some((m) => m.role === 'user'));
 
   // ---- Agente general + asistente de producto ----
   // En modo general solo se envían nombres y precios. Cuando el cliente
@@ -3030,6 +3077,7 @@ Eres ${cfg.assistantName}, asistente virtual de ventas de ${cfg.companyName}, at
 ${cfg.baseInstructions}
 
 ${isSellerModeEnabled(cfg) ? DEFAULT_SELLER_MODE_PROMPT : ''}
+${isFirstContact && cfg.firstContactPrompt ? `\nINSTRUCCIONES ESPECÍFICAS PARA EL PRIMER CONTACTO — APLÍCALAS SOLO EN ESTE PRIMER TURNO DEL CLIENTE:\n${cfg.firstContactPrompt}` : ''}
 
 REGLA DE CATÁLOGO — LA MÁS IMPORTANTE DE TODAS, NUNCA LA ROMPAS:
 Los ÚNICOS productos que existen son los que aparecen en el catálogo (más abajo en este mensaje). Si el cliente pregunta por algo que NO está en esa lista (otro producto, otro nombre, otra categoría), debes decir con claridad que no lo tienes disponible — NUNCA inventes un producto, nombre, precio, uso o característica que no esté escrito exactamente en el catálogo, así el cliente insista o describa algo que "suena parecido". Inventar un producto que no existe es el peor error que puedes cometer — genera confusión, pedidos que no se pueden cumplir, y hace quedar mal al negocio.
