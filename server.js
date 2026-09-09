@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.30.1';
+const CURRENT_VERSION = '1.31.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -449,6 +449,31 @@ function readConfig() {
 function writeConfig(cfg) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
+function normalizeFirstContactSequence(product) {
+  if (Array.isArray(product.firstContactSequence)) {
+    return product.firstContactSequence
+      .filter(Boolean)
+      .map((step, index) => ({
+        id: step.id || `fc-${Date.now()}-${index}`,
+        type: step.type || 'text',
+        text: step.text || '',
+        mediaUrl: step.mediaUrl || '',
+        delaySeconds: Math.max(0, Number(step.delaySeconds) || 0),
+        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b) => String(b || '').trim()).filter(Boolean) : [],
+      }));
+  }
+
+  // Compatibilidad con productos creados antes del constructor de secuencias.
+  const sequence = [];
+  if (product.firstContactMessage) {
+    sequence.push({ id: `fc-legacy-text-${product.id || Date.now()}`, type: 'text', text: product.firstContactMessage, mediaUrl: '', delaySeconds: 0, buttons: [] });
+  }
+  for (const url of Array.isArray(product.firstContactImages) ? product.firstContactImages.slice(0, 2) : []) {
+    sequence.push({ id: `fc-legacy-img-${product.id || Date.now()}-${sequence.length}`, type: 'image', text: '', mediaUrl: typeof url === 'string' ? url : (url?.url || ''), delaySeconds: 2, buttons: [] });
+  }
+  return sequence;
+}
+
 function readProducts() {
   const products = JSON.parse(fs.readFileSync(PRODUCTS_PATH, 'utf8'));
   return products.map((p) => ({
@@ -459,6 +484,7 @@ function readProducts() {
     firstContactEnabled: p.firstContactEnabled === true,
     firstContactMessage: p.firstContactMessage || '',
     firstContactImages: Array.isArray(p.firstContactImages) ? p.firstContactImages : [],
+    firstContactSequence: normalizeFirstContactSequence(p),
   }));
 }
 function writeProducts(products) {
@@ -480,9 +506,13 @@ const upload = multer({
       if (!file.mimetype.startsWith('video/')) {
         return cb(new Error('El archivo de video debe ser un video real (mp4, etc.)'));
       }
-    } else if (file.fieldname === 'images') {
+    } else if (file.fieldname === 'images' || file.fieldname === 'firstContactImages') {
       if (!file.mimetype.startsWith('image/')) {
         return cb(new Error('Las imágenes deben ser archivos de imagen reales'));
+      }
+    } else if (file.fieldname === 'firstContactMedia') {
+      if (!file.mimetype.startsWith('image/') && !file.mimetype.startsWith('video/') && !file.mimetype.startsWith('audio/')) {
+        return cb(new Error('El material del primer contacto debe ser imagen, video o audio'));
       }
     }
     cb(null, true);
@@ -492,6 +522,7 @@ const upload = multer({
 const uploadProductMedia = upload.fields([
   { name: 'images', maxCount: 6 },
   { name: 'firstContactImages', maxCount: 2 },
+  { name: 'firstContactMedia', maxCount: 10 },
   { name: 'video', maxCount: 1 },
 ]);
 const uploadSingleImage = upload.single('image');
@@ -623,6 +654,19 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
     firstContactEnabled: req.body.firstContactEnabled === 'true' || req.body.firstContactEnabled === true,
     firstContactMessage: req.body.firstContactMessage || '',
     firstContactImages: (files.firstContactImages || []).map((f) => `/media/${f.filename}`),
+    firstContactSequence: (() => {
+      let seq = [];
+      try { seq = req.body.firstContactSequence ? JSON.parse(req.body.firstContactSequence) : []; } catch (e) {}
+      const media = files.firstContactMedia || [];
+      return Array.isArray(seq) ? seq.map((step, i) => ({
+        id: step.id || `fc-${Date.now()}-${i}`,
+        type: step.type || 'text',
+        text: step.text || '',
+        mediaUrl: step.mediaIndex !== undefined && media[Number(step.mediaIndex)] ? `/media/${media[Number(step.mediaIndex)].filename}` : (step.mediaUrl || ''),
+        delaySeconds: Math.max(0, Number(step.delaySeconds) || 0),
+        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b) => String(b || '').trim()).filter(Boolean) : [],
+      })).filter((step) => step.type !== 'text' || step.text.trim() || step.buttons.length === 0) : [];
+    })(),
     images: (files.images || []).map((f) => `/media/${f.filename}`),
     video: (files.video || [])[0] ? `/media/${files.video[0].filename}` : '',
   };
@@ -661,6 +705,20 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
     firstContactEnabled: req.body.firstContactEnabled !== undefined ? (req.body.firstContactEnabled === 'true' || req.body.firstContactEnabled === true) : !!existing.firstContactEnabled,
     firstContactMessage: req.body.firstContactMessage ?? (existing.firstContactMessage || ''),
     firstContactImages: (files.firstContactImages || []).length > 0 ? (files.firstContactImages || []).map((f) => `/media/${f.filename}`) : (existing.firstContactImages || []),
+    firstContactSequence: (() => {
+      if (req.body.firstContactSequence === undefined) return existing.firstContactSequence || normalizeFirstContactSequence(existing);
+      let seq = [];
+      try { seq = JSON.parse(req.body.firstContactSequence || '[]'); } catch (e) {}
+      const media = files.firstContactMedia || [];
+      return Array.isArray(seq) ? seq.map((step, i) => ({
+        id: step.id || `fc-${Date.now()}-${i}`,
+        type: step.type || 'text',
+        text: step.text || '',
+        mediaUrl: step.mediaIndex !== undefined && media[Number(step.mediaIndex)] ? `/media/${media[Number(step.mediaIndex)].filename}` : (step.mediaUrl || ''),
+        delaySeconds: Math.max(0, Number(step.delaySeconds) || 0),
+        buttons: Array.isArray(step.buttons) ? step.buttons.slice(0, 3).map((b) => String(b || '').trim()).filter(Boolean) : [],
+      })).filter((step) => step.type !== 'text' || step.text.trim() || step.buttons.length === 0) : [];
+    })(),
     keywords:
       req.body.keywords !== undefined
         ? req.body.keywords.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean)
@@ -3086,7 +3144,7 @@ function buildSystemPrompt(jid, overrideOrderData) {
       }
 
       const videoLine = p.video ? '  Tiene video disponible: SÍ' : '  Tiene video disponible: NO';
-      const firstContactLine = p.firstContactEnabled ? `\n  PRIMER CONTACTO DEL PRODUCTO: ACTIVO${p.firstContactMessage ? ` | Mensaje configurado: ${p.firstContactMessage}` : ''}${(p.firstContactImages || []).length ? ` | Imágenes iniciales: ${(p.firstContactImages || []).length}` : ''}` : '';
+      const firstContactLine = p.firstContactEnabled ? `\n  PRIMER CONTACTO DEL PRODUCTO: ACTIVO | Pasos configurados: ${(p.firstContactSequence || []).length}` : '';
       const priceRuleLine = p.priceBefore && p.priceAfter
         ? `\n  PRECIO OBLIGATORIO AL MENCIONARLO: 🔥 ~~ANTES: ${p.priceBefore}~~ | 🎉 Hoy está en descuento: ${p.priceAfter} | 🚚 Envío GRATIS + 💵 pago CONTRA ENTREGA.`
         : '';
@@ -4048,22 +4106,58 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
 }
 
   async function sendProductFirstContact(userId, product, isFromAd) {
-    if (!product?.firstContactEnabled || !product.firstContactMessage) return false;
+    if (!product?.firstContactEnabled) return false;
     ensureClientRecord(userId);
     const client = clients.get(userId);
     if (client.firstContactSentForProduct?.[product.id]) return false;
     // Se dispara en una entrada de publicidad o en el primer contacto directo con un producto.
     if (!isFromAd && client.messageCount > 1) return false;
 
-    await sendAndTrack(userId, { text: product.firstContactMessage });
-    appendChatLog(userId, { from: 'bot', text: product.firstContactMessage, type: 'text', timestamp: Date.now() });
-    for (const url of (product.firstContactImages || []).slice(0, 2)) {
-      const imgPath = path.join(__dirname, String(url).replace(/^\//, ''));
-      if (fs.existsSync(imgPath)) {
-        await sendAndTrack(userId, { image: fs.readFileSync(imgPath) });
-        appendChatLog(userId, { from: 'bot', text: '', type: 'image', mediaUrl: url, timestamp: Date.now() });
+    const sequence = normalizeFirstContactSequence(product);
+    if (sequence.length === 0) return false;
+
+    for (let i = 0; i < sequence.length; i++) {
+      const step = sequence[i];
+      const delay = Math.max(0, Number(step.delaySeconds) || 0);
+      if (delay > 0) await sleep(delay * 1000);
+
+      if (step.type === 'text' || step.type === 'question') {
+        if (!String(step.text || '').trim()) continue;
+        await sendAndTrack(userId, { text: step.text });
+        appendChatLog(userId, { from: 'bot', text: step.text, type: 'text', timestamp: Date.now() });
+      } else if (step.type === 'buttons') {
+        const text = String(step.text || '').trim();
+        if (text) {
+          await sendAndTrack(userId, { text });
+          appendChatLog(userId, { from: 'bot', text, type: 'text', timestamp: Date.now() });
+        }
+        // WhatsApp no siempre permite botones interactivos según la versión/cuenta.
+        // Por compatibilidad enviamos las opciones como texto claro.
+        const buttons = (step.buttons || []).slice(0, 3).filter(Boolean);
+        if (buttons.length) {
+          const optionsText = buttons.map((b, n) => `${n + 1}. ${b}`).join('\n');
+          await sendAndTrack(userId, { text: optionsText });
+          appendChatLog(userId, { from: 'bot', text: optionsText, type: 'text', timestamp: Date.now() });
+        }
+      } else if (step.mediaUrl) {
+        const mediaPath = path.join(__dirname, String(step.mediaUrl).replace(/^\//, ''));
+        if (!fs.existsSync(mediaPath)) continue;
+        const buffer = fs.readFileSync(mediaPath);
+        if (step.type === 'image') {
+          await sendAndTrack(userId, { image: buffer });
+          appendChatLog(userId, { from: 'bot', text: '', type: 'image', mediaUrl: step.mediaUrl, timestamp: Date.now() });
+        } else if (step.type === 'video') {
+          await sendAndTrack(userId, { video: buffer });
+          appendChatLog(userId, { from: 'bot', text: '', type: 'video', mediaUrl: step.mediaUrl, timestamp: Date.now() });
+        } else if (step.type === 'audio') {
+          const ext = path.extname(mediaPath).toLowerCase();
+          const audioMime = ext === '.mp3' ? 'audio/mpeg' : ext === '.m4a' ? 'audio/mp4' : ext === '.wav' ? 'audio/wav' : 'audio/ogg';
+          await sendAndTrack(userId, { audio: buffer, mimetype: audioMime, ptt: false });
+          appendChatLog(userId, { from: 'bot', text: '', type: 'audio', mediaUrl: step.mediaUrl, timestamp: Date.now() });
+        }
       }
     }
+
     client.firstContactSentForProduct[product.id] = Date.now();
     clients.set(userId, client);
     saveClients();
