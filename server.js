@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.31.2';
+const CURRENT_VERSION = '1.31.3';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1726,7 +1726,7 @@ async function uploadOrderToSkydropx(order) {
     method: 'POST',
     body: JSON.stringify(quotationBody),
   });
-  const quotationId = quotationRes?.data?.id;
+  const quotationId = quotationRes?.id || quotationRes?.data?.id || quotationRes?.data?.data?.id || quotationRes?.quotation?.id;
   if (!quotationId) {
     throw new Error('Skydropx no devolvió un id de cotización.');
   }
@@ -3193,7 +3193,7 @@ const DEFAULT_SELLER_MODE_PROMPT = `
 MODO VENDEDOR — ASESORA COMERCIAL INFORMATIVA:
 Tu estilo NO es el de una vendedora agresiva. Eres una asesora comercial que informa con claridad, genera confianza y facilita la compra cuando el cliente realmente quiere comprar.
 1. Si el cliente pide información de un producto concreto, puedes dar el precio desde el primer mensaje; no escondas el precio ni obligues al cliente a responder varias preguntas antes de conocerlo.
-2. Cuando informes el precio, respeta SIEMPRE el formato obligatorio de precio del sistema: precio anterior tachado + precio actual en descuento + envío gratis/pago contra entrega cuando corresponda.
+2. Cuando informes el precio, respeta SIEMPRE el formato obligatorio de precio del sistema: precio anterior tachado + precio actual en descuento en negrita de WhatsApp + envío gratis/pago contra entrega cuando corresponda.
 3. Después del precio, entrega solo una explicación útil y breve (por ejemplo, para qué sirve, cómo funciona o un beneficio real) y haz una pregunta sencilla para saber qué quiere conocer o para avanzar.
 4. No conviertas cada respuesta en un cierre de venta. Vende mediante información útil, confianza y una conversación natural.
 5. No repitas el precio si el cliente no lo está preguntando y ya lo conoce, salvo que sea útil para resolver una objeción o cerrar.
@@ -3245,7 +3245,7 @@ function buildSystemPrompt(jid, overrideOrderData) {
       const videoLine = p.video ? '  Tiene video disponible: SÍ' : '  Tiene video disponible: NO';
       const firstContactLine = p.firstContactEnabled ? `\n  PRIMER CONTACTO DEL PRODUCTO: ACTIVO | Pasos configurados: ${(p.firstContactSequence || []).length}` : '';
       const priceRuleLine = p.priceBefore && p.priceAfter
-        ? `\n  PRECIO OBLIGATORIO AL MENCIONARLO: 🔥 ~~ANTES: ${p.priceBefore}~~ | 🎉 Hoy está en descuento: ${p.priceAfter} | 🚚 Envío GRATIS + 💵 pago CONTRA ENTREGA.`
+        ? `\n  PRECIO OBLIGATORIO AL MENCIONARLO: 🔥 ~~ANTES: ${p.priceBefore}~~ | 🎉 Hoy está en descuento: *${p.priceAfter}* | 🚚 Envío GRATIS + 💵 pago CONTRA ENTREGA.`
         : '';
       const offersLine =
         p.quantityOffers && p.quantityOffers.length > 0
@@ -3294,7 +3294,7 @@ ${interestedProduct && interestedProduct.sellerModeEnabled && getProductSaleMode
 REGLA DE PRECIO Y OFERTA — OBLIGATORIA:
 Cuando el producto activo tenga precio anterior Y precio actual, SIEMPRE presenta primero el precio anterior tachado y después el precio actual como descuento. Nunca respondas solo con el precio actual. Usa este formato o uno visualmente equivalente:
 🔥 ~~ANTES: [PRECIO ANTERIOR]~~
-🎉 Hoy está en descuento: [PRECIO ACTUAL]
+🎉 Hoy está en descuento: *[PRECIO ACTUAL]*
 🚚 Envío GRATIS + 💵 pago CONTRA ENTREGA.
 Después termina normalmente con una pregunta que impulse la conversación de compra. Si existe oferta por cantidad configurada, presenta también esa opción y el ahorro cuando sea posible. NUNCA inventes “solo por hoy”, “tiempo limitado”, “últimas unidades” o cualquier urgencia si no está configurada en el producto.
 
