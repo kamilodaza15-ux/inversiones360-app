@@ -399,6 +399,25 @@ async function saveMainConfig(savedLabelId) {
   saved.textContent = 'Guardado ✔';
   setTimeout(() => (saved.textContent = ''), 2000);
 }
+document.getElementById('testDropiConnectionBtn')?.addEventListener('click', async () => {
+  const status = document.getElementById('dropiConnectionStatus');
+  const btn = document.getElementById('testDropiConnectionBtn');
+  if (!status || !btn) return;
+  btn.disabled = true;
+  status.style.color = '';
+  status.textContent = '🔎 Probando conexión con Dropi...';
+  try {
+    // Primero guarda las credenciales actuales para que la prueba use exactamente lo que acabas de escribir.
+    await saveMainConfig('configSaved');
+    const res = await fetch('/api/integrations/dropi/test', { method: 'POST' }).then(r => r.json());
+    status.style.color = res.ok ? '#16a34a' : '#dc2626';
+    status.textContent = res.ok ? '✔ Conexión con Dropi correcta.' : (res.error || 'No se pudo conectar con Dropi.');
+  } catch (e) {
+    status.style.color = '#dc2626';
+    status.textContent = e.message || 'No se pudo probar la conexión.';
+  } finally { btn.disabled = false; }
+});
+
 document.getElementById('saveConfigBtn').addEventListener('click', () => saveMainConfig('configSaved'));
 document.getElementById('saveAiProviderBtn').addEventListener('click', () => saveMainConfig('aiProviderSaved'));
 
@@ -1610,6 +1629,25 @@ document.getElementById('ordersBulkChangeStatusBtn').addEventListener('click', a
   loadOrders();
 });
 
+function renderOrderTimeline(currentStatus) {
+  const el = document.getElementById('od-statusTimeline');
+  if (!el) return;
+  const steps = [
+    ['pendiente','Pendiente','🟡'],
+    ['confirmado','Confirmado','✅'],
+    ['guia_generada','Guía generada','📦'],
+    ['en_camino','En camino','🚚'],
+    ['con_novedad','Novedad','⚠️'],
+    ['entregado','Entregado','📬']
+  ];
+  const currentIndex = steps.findIndex(s => s[0] === currentStatus);
+  el.innerHTML = steps.map((s, i) => {
+    const active = i === currentIndex;
+    const done = currentIndex >= 0 && i < currentIndex && currentStatus !== 'con_novedad';
+    return `<div class=\"order-timeline-step ${active ? 'active' : ''} ${done ? 'done' : ''}\"><span>${s[2]}</span><small>${s[1]}</small></div>`;
+  }).join('');
+}
+
 function openOrderDetail(id) {
   const order = ordersCache.find((o) => o.id === id);
   if (!order) return;
@@ -1626,6 +1664,10 @@ function openOrderDetail(id) {
   }
   document.getElementById('od-quantity').value = order.quantity || 1;
   document.getElementById('od-price').value = order.price || '';
+  document.getElementById('od-notes').value = order.notes || '';
+  const totalPreview = document.getElementById('od-totalPreview');
+  if (totalPreview) totalPreview.textContent = '$' + Number(String(order.price || '').replace(/[^\d]/g, '') || 0).toLocaleString('es-CO');
+  renderOrderTimeline(order.status || 'pendiente');
   document.getElementById('od-deliveryType').value = order.deliveryType || 'domicilio';
   document.getElementById('od-address').value = order.address || '';
   populateDepartmentSelect('od-department', 'od-city').then(() => {
@@ -1706,6 +1748,8 @@ document.getElementById('closeOrderDetailBtn').addEventListener('click', () => {
   document.getElementById('orderDetailOverlay').style.display = 'none';
 });
 
+document.getElementById('od-status')?.addEventListener('change', (e) => renderOrderTimeline(e.target.value));
+
 document.getElementById('saveOrderBtn').addEventListener('click', async () => {
   if (!editingOrderId) return;
   await fetch(`/api/orders/${editingOrderId}`, {
@@ -1724,6 +1768,7 @@ document.getElementById('saveOrderBtn').addEventListener('click', async () => {
       neighborhood: document.getElementById('od-neighborhood').value,
       transportadora: document.getElementById('od-transportadora').value,
       dropiGuideNumber: document.getElementById('od-guideNumber').value,
+      notes: document.getElementById('od-notes').value,
       status: document.getElementById('od-status').value,
     }),
   });
