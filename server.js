@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.29.0';
+const CURRENT_VERSION = '1.30.1';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -455,6 +455,10 @@ function readProducts() {
     ...p,
     saleMode: p.saleMode || p.salesMode || p.assistantMode || p.modoVenta || 'general',
     assistantPrompt: p.assistantPrompt || '',
+    sellerModeEnabled: p.sellerModeEnabled === true || p.sellerMode === true,
+    firstContactEnabled: p.firstContactEnabled === true,
+    firstContactMessage: p.firstContactMessage || '',
+    firstContactImages: Array.isArray(p.firstContactImages) ? p.firstContactImages : [],
   }));
 }
 function writeProducts(products) {
@@ -487,6 +491,7 @@ const upload = multer({
 });
 const uploadProductMedia = upload.fields([
   { name: 'images', maxCount: 6 },
+  { name: 'firstContactImages', maxCount: 2 },
   { name: 'video', maxCount: 1 },
 ]);
 const uploadSingleImage = upload.single('image');
@@ -614,6 +619,10 @@ app.post('/api/products', uploadProductMedia, (req, res) => {
     quantityOffers,
     saleMode: req.body.saleMode || 'general',
     assistantPrompt: req.body.assistantPrompt || '',
+    sellerModeEnabled: req.body.sellerModeEnabled === 'true' || req.body.sellerModeEnabled === true,
+    firstContactEnabled: req.body.firstContactEnabled === 'true' || req.body.firstContactEnabled === true,
+    firstContactMessage: req.body.firstContactMessage || '',
+    firstContactImages: (files.firstContactImages || []).map((f) => `/media/${f.filename}`),
     images: (files.images || []).map((f) => `/media/${f.filename}`),
     video: (files.video || [])[0] ? `/media/${files.video[0].filename}` : '',
   };
@@ -648,6 +657,10 @@ app.put('/api/products/:id', uploadProductMedia, (req, res) => {
     quantityOffers,
     saleMode: req.body.saleMode ?? (existing.saleMode || 'general'),
     assistantPrompt: req.body.assistantPrompt ?? (existing.assistantPrompt || ''),
+    sellerModeEnabled: req.body.sellerModeEnabled !== undefined ? (req.body.sellerModeEnabled === 'true' || req.body.sellerModeEnabled === true) : !!existing.sellerModeEnabled,
+    firstContactEnabled: req.body.firstContactEnabled !== undefined ? (req.body.firstContactEnabled === 'true' || req.body.firstContactEnabled === true) : !!existing.firstContactEnabled,
+    firstContactMessage: req.body.firstContactMessage ?? (existing.firstContactMessage || ''),
+    firstContactImages: (files.firstContactImages || []).length > 0 ? (files.firstContactImages || []).map((f) => `/media/${f.filename}`) : (existing.firstContactImages || []),
     keywords:
       req.body.keywords !== undefined
         ? req.body.keywords.split(',').map((k) => k.trim().toLowerCase()).filter(Boolean)
@@ -1733,7 +1746,7 @@ app.post('/api/orders/:id/upload-skydropx', async (req, res) => {
 function emptySimOrderData() {
   return {
     nombre: '', telefono: '', direccion: '', departamento: '',
-    ciudad: '', barrio: '', producto: '', cantidad: '', tipoEntrega: '',
+    ciudad: '', barrio: '', transportadora: '', producto: '', cantidad: '', tipoEntrega: '',
   };
 }
 let simulationSession = { history: [], orderData: emptySimOrderData() };
@@ -1794,7 +1807,7 @@ app.post('/api/simulator/message', async (req, res) => {
             resultText = 'Ese producto no tiene un video cargado.';
           }
         } else if (toolCall.function.name === 'actualizar_datos_pedido') {
-          const fields = ['nombre', 'telefono', 'direccion', 'departamento', 'ciudad', 'barrio', 'producto', 'cantidad', 'tipoEntrega'];
+          const fields = ['nombre', 'telefono', 'direccion', 'departamento', 'ciudad', 'barrio', 'transportadora', 'producto', 'cantidad', 'tipoEntrega'];
           fields.forEach((f) => {
             if (args[f] !== undefined && args[f] !== null && String(args[f]).trim() !== '') {
               simulationSession.orderData[f] = String(args[f]).trim();
@@ -2003,7 +2016,7 @@ const productImageTool = {
   function: {
     name: 'enviar_imagen_producto',
     description:
-      'Envía la o las fotos reales del producto por WhatsApp. Úsala cada vez que el cliente pida ver fotos, imágenes, cómo se ve el producto, catálogo, o algo similar. Nunca digas que enviaste una foto sin llamar a esta función primero.',
+      'Envía la o las fotos reales del producto por WhatsApp. Úsala cuando el cliente pida fotos o cuando pregunte por una intención que tenga una imagen asociada, especialmente modo de uso, cómo se usa, cómo se aplica, instrucciones o aplicación. El parámetro contexto debe describir esa intención para elegir la imagen correcta. Nunca digas que enviaste una foto sin llamar a esta función primero.',
     parameters: {
       type: 'object',
       properties: {
@@ -2052,7 +2065,7 @@ const updateOrderDataTool = {
   function: {
     name: 'actualizar_datos_pedido',
     description:
-      'Guarda o corrige uno o varios datos del cliente para su pedido. Llámala cada vez que el cliente dé o corrija cualquiera de estos datos, aunque sea uno solo a la vez — no esperes a tener todos los datos para llamarla.',
+      'Guarda o corrige uno o varios datos del cliente para su pedido. Llámala cada vez que el cliente dé o corrija cualquiera de estos datos, aunque sea uno solo a la vez — no esperes a tener todos los datos. Al recopilar datos para una compra, asume domicilio por defecto; NO preguntes primero si quiere domicilio u oficina. Si el cliente menciona oficina o una transportadora, guarda tipoEntrega=oficina y la transportadora y no pidas dirección exacta.',
     parameters: {
       type: 'object',
       properties: {
@@ -2061,7 +2074,8 @@ const updateOrderDataTool = {
         direccion: { type: 'string', description: 'Dirección completa, con nomenclatura (ej. Carrera 4 #3-40, o Manzana 15 Casa 27)' },
         departamento: { type: 'string', description: 'Departamento de Colombia' },
         ciudad: { type: 'string', description: 'Ciudad o municipio' },
-        barrio: { type: 'string', description: 'Barrio (opcional)' },
+        barrio: { type: 'string', description: 'Barrio (opcional; para domicilio)' },
+        transportadora: { type: 'string', description: 'Transportadora y/o oficina/punto de entrega cuando sea entrega en oficina (ej. Interrapidísimo)' },
         producto: { type: 'string', description: 'Producto que quiere comprar' },
         cantidad: { type: 'string', description: 'Cantidad de unidades' },
         tipoEntrega: { type: 'string', enum: ['domicilio', 'oficina'], description: 'Cómo prefiere recibirlo' },
@@ -2108,17 +2122,47 @@ const scheduleDeliveryTool = {
 function handleUpdateOrderData(jid, args) {
   ensureClientRecord(jid);
   const client = clients.get(jid);
-  const fields = ['nombre', 'telefono', 'direccion', 'departamento', 'ciudad', 'barrio', 'producto', 'cantidad', 'tipoEntrega'];
+  const incoming = { ...args };
+
+  // Detecta automáticamente oficina/transportadora, incluso con errores de escritura.
+  const officeCarrier = detectOfficeTransportadora([incoming.tipoEntrega, incoming.transportadora, incoming.direccion, incoming.barrio, incoming.ciudad].filter(Boolean).join(' '));
+  if (officeCarrier) {
+    incoming.tipoEntrega = 'oficina';
+    incoming.transportadora = incoming.transportadora || officeCarrier;
+    // Una transportadora mencionada explícitamente es suficiente para considerar oficina.
+    incoming.direccion = undefined;
+  } else if (incoming.tipoEntrega) {
+    const t = normalizeColombiaText(incoming.tipoEntrega);
+    if (t.includes('oficina')) incoming.tipoEntrega = 'oficina';
+    if (t.includes('domicilio') || t.includes('casa')) incoming.tipoEntrega = 'domicilio';
+  }
+
+  // Validación estricta: nunca guardamos una ciudad que no exista en colombia.json.
+  const city = incoming.ciudad !== undefined ? String(incoming.ciudad).trim() : client.orderData.ciudad;
+  const dept = incoming.departamento !== undefined ? String(incoming.departamento).trim() : client.orderData.departamento;
+  if (city) {
+    const validation = validateAndNormalizeLocation(city, dept);
+    if (!validation.ok) {
+      return `UBICACION_NO_VALIDADA: ${validation.reason} No guardé la ciudad. Pide al cliente el nombre exacto de la ciudad/municipio y, si hace falta, el departamento hasta encontrar una combinación válida en colombia.json.`;
+    }
+    incoming.ciudad = validation.city;
+    incoming.departamento = validation.department;
+  } else if (dept && !isValidDepartment(dept)) {
+    return `UBICACION_NO_VALIDADA: El departamento "${dept}" no aparece en colombia.json. No lo guardé. Pide al cliente el nombre exacto del departamento.`;
+  }
+
+  const fields = ['nombre', 'telefono', 'direccion', 'departamento', 'ciudad', 'barrio', 'transportadora', 'producto', 'cantidad', 'tipoEntrega'];
   fields.forEach((f) => {
-    if (args[f] !== undefined && args[f] !== null && String(args[f]).trim() !== '') {
-      client.orderData[f] = String(args[f]).trim();
+    if (incoming[f] !== undefined && incoming[f] !== null && String(incoming[f]).trim() !== '') {
+      client.orderData[f] = String(incoming[f]).trim();
     }
   });
-  if (args.producto) {
-    const product = findProductByQuery(args.producto);
+  if (client.orderData.tipoEntrega === 'oficina') client.orderData.direccion = '';
+  if (incoming.producto) {
+    const product = findProductByQuery(incoming.producto);
     if (product) client.activeProductId = product.id;
   }
-  if (args.nombre) client.name = client.orderData.nombre;
+  if (incoming.nombre) client.name = client.orderData.nombre;
   clients.set(jid, client);
   saveClients();
   io.emit('clientUpdate', { jid, client });
@@ -2127,7 +2171,7 @@ function handleUpdateOrderData(jid, args) {
 
 function describeMissingOrderFields(orderData) {
   const required = orderData.tipoEntrega === 'oficina'
-    ? ['nombre', 'ciudad', 'departamento', 'telefono', 'producto', 'cantidad', 'tipoEntrega']
+    ? ['nombre', 'ciudad', 'departamento', 'telefono', 'transportadora', 'producto', 'cantidad', 'tipoEntrega']
     : ['nombre', 'direccion', 'ciudad', 'departamento', 'telefono', 'producto', 'cantidad', 'tipoEntrega'];
   const missing = required.filter((f) => !orderData[f]);
   return missing.length === 0
@@ -2490,7 +2534,7 @@ function getToolsForTurn(userId, text) {
   const orderData = client?.orderData || {};
   const tools = [];
 
-  const asksImage = /(foto|fotos|imagen|imagenes|imágenes|cómo se ve|como se ve|verlo|verla|ver el producto|mu[eé]strame|mostrar|cat[aá]logo)/i.test(t);
+  const asksImage = /(foto|fotos|imagen|imagenes|imágenes|cómo se ve|como se ve|verlo|verla|ver el producto|mu[eé]strame|mostrar|cat[aá]logo|modo de uso|como se usa|cómo se usa|como se aplica|cómo se aplica|aplicacion|aplicación|instrucciones)/i.test(t);
   const asksVideo = /(video|demostraci[oó]n|c[oó]mo funciona|como funciona|mu[eé]strame.*video|tienes.*video)/i.test(t);
   // El estado debe activar la herramienta ante cualquier forma razonable de
   // preguntar por un pedido ya realizado. Se mantiene deliberadamente amplia
@@ -2532,10 +2576,16 @@ function findBestMatchingImages(product, contexto) {
     const general = images.filter((i) => !i.rule);
     return general.length > 0 ? general : images;
   }
-  const contextoLower = contexto.toLowerCase();
-  const matching = images.filter(
-    (i) => i.rule && (contextoLower.includes(i.rule.toLowerCase()) || i.rule.toLowerCase().includes(contextoLower))
-  );
+  const contextoLower = normalizeColombiaText(contexto);
+  const aliases = contextoLower.includes('modo de uso') || contextoLower.includes('como se usa') || contextoLower.includes('como se aplica') || contextoLower.includes('aplicacion') || contextoLower.includes('instrucciones')
+    ? ['modo de uso', 'como se usa', 'como se aplica', 'aplicacion', 'instrucciones', 'uso']
+    : contextoLower.split(' ').filter(Boolean);
+  const matching = images.filter((i) => {
+    const rule = normalizeColombiaText(i.rule);
+    if (!rule) return false;
+    const ruleParts = rule.split(',').map((x) => x.trim()).filter(Boolean);
+    return ruleParts.some((part) => contextoLower.includes(part) || aliases.some((a) => part.includes(a) || a.includes(part)));
+  });
   if (matching.length > 0) return matching;
   const general = images.filter((i) => !i.rule);
   return general.length > 0 ? general : images;
@@ -2983,23 +3033,25 @@ async function transcribeAudio(base64Data, mimetype) {
 }
 
 const DEFAULT_SELLER_MODE_PROMPT = `
-MODO VENDEDOR — CAPA DE VENTA ACTIVA:
-Tu objetivo es ayudar al cliente a decidir y comprar de forma natural, cálida y útil, sin sonar agresiva ni robótica.
-1. Descubre la necesidad cuando sea útil y relaciona el producto con esa necesidad.
-2. Presenta primero los beneficios y características que realmente estén escritos en el producto; nunca inventes.
-3. No descargues toda la información de golpe: avanza según lo que el cliente pregunta.
-4. Ante una objeción, responde con empatía y resuelve la duda antes de intentar cerrar.
-5. Detecta señales de compra y facilita el cierre sin presionar innecesariamente.
-6. Si existe una oferta por cantidad configurada para el producto, úsala como oportunidad de upsell sin ocultar el precio de una unidad.
-7. Si el cliente no está listo, conserva una conversación natural; no fuerces el cierre.
-8. Después de una respuesta de valor, cuando corresponda, termina con una pregunta corta que haga avanzar la conversación.
-9. Nunca inventes urgencia, escasez, testimonios, descuentos, resultados ni políticas.
-10. Las reglas obligatorias del prompt general, precios, pedidos, herramientas, cancelaciones e intervención humana tienen prioridad sobre esta capa.
+MODO VENDEDOR — ASESORA COMERCIAL INFORMATIVA:
+Tu estilo NO es el de una vendedora agresiva. Eres una asesora comercial que informa con claridad, genera confianza y facilita la compra cuando el cliente realmente quiere comprar.
+1. Si el cliente pide información de un producto concreto, puedes dar el precio desde el primer mensaje; no escondas el precio ni obligues al cliente a responder varias preguntas antes de conocerlo.
+2. Cuando informes el precio, respeta SIEMPRE el formato obligatorio de precio del sistema: precio anterior tachado + precio actual en descuento + envío gratis/pago contra entrega cuando corresponda.
+3. Después del precio, entrega solo una explicación útil y breve (por ejemplo, para qué sirve, cómo funciona o un beneficio real) y haz una pregunta sencilla para saber qué quiere conocer o para avanzar.
+4. No conviertas cada respuesta en un cierre de venta. Vende mediante información útil, confianza y una conversación natural.
+5. No repitas el precio si el cliente no lo está preguntando y ya lo conoce, salvo que sea útil para resolver una objeción o cerrar.
+6. Cuando el cliente muestre intención clara de compra (por ejemplo: "lo quiero", "me lo llevo", "quiero pedirlo", "cómo hago para comprar"), deja de explicar de más y pasa a recopilar los datos necesarios del pedido.
+7. Al iniciar la recopilación de datos NO preguntes "¿domicilio u oficina?". Asume domicilio por defecto. Si el cliente menciona oficina o una transportadora, detecta automáticamente entrega en oficina y continúa con los datos correspondientes.
+8. Si el cliente entrega varios datos juntos, reconócelos todos y guárdalos; no vuelvas a preguntarlos por separado.
+9. Descubre la necesidad cuando sea útil y relaciona la necesidad con beneficios que realmente estén escritos en el producto; nunca inventes.
+10. No descargues toda la información de golpe: responde exactamente a lo que pregunta y añade solo lo que ayude a decidir.
+11. Ante una objeción, responde con empatía y resuelve la duda antes de intentar cerrar.
+12. Si existe una oferta por cantidad configurada para el producto, úsala como oportunidad comercial sin ocultar el precio de una unidad y mostrando el ahorro real.
+13. Si el cliente no está listo, conserva una conversación natural; no fuerces el cierre.
+14. Después de una respuesta de valor, cuando corresponda, termina con una pregunta corta y natural que haga avanzar la conversación.
+15. Nunca inventes urgencia, escasez, testimonios, descuentos, resultados ni políticas.
+16. Las reglas obligatorias del prompt general, precios, pedidos, herramientas, cancelaciones e intervención humana tienen prioridad sobre esta capa.
 `;
-
-function isSellerModeEnabled(cfg) {
-  return cfg.sellerMode === true || cfg.sellerModeEnabled === true || cfg.modoVendedor === true;
-}
 
 function getProductSaleMode(product) {
   const mode = String(product?.saleMode || product?.salesMode || product?.assistantMode || product?.modoVenta || '').toLowerCase().trim();
@@ -3015,9 +3067,7 @@ function buildSystemPrompt(jid, overrideOrderData) {
   // reutilizar este mismo prompt sin tocar ningún cliente real.
   const client = jid ? clients.get(jid) : null;
   const orderData = overrideOrderData || client?.orderData || {};
-  const existingHistory = jid ? conversations.get(jid) : null;
-  const isFirstContact = !!jid && (!existingHistory || !existingHistory.some((m) => m.role === 'user'));
-
+  
   // ---- Agente general + asistente de producto ----
   // En modo general solo se envían nombres y precios. Cuando el cliente
   // menciona un producto, se activa su contexto completo. Esto evita pagar
@@ -3036,14 +3086,18 @@ function buildSystemPrompt(jid, overrideOrderData) {
       }
 
       const videoLine = p.video ? '  Tiene video disponible: SÍ' : '  Tiene video disponible: NO';
+      const firstContactLine = p.firstContactEnabled ? `\n  PRIMER CONTACTO DEL PRODUCTO: ACTIVO${p.firstContactMessage ? ` | Mensaje configurado: ${p.firstContactMessage}` : ''}${(p.firstContactImages || []).length ? ` | Imágenes iniciales: ${(p.firstContactImages || []).length}` : ''}` : '';
+      const priceRuleLine = p.priceBefore && p.priceAfter
+        ? `\n  PRECIO OBLIGATORIO AL MENCIONARLO: 🔥 ~~ANTES: ${p.priceBefore}~~ | 🎉 Hoy está en descuento: ${p.priceAfter} | 🚚 Envío GRATIS + 💵 pago CONTRA ENTREGA.`
+        : '';
       const offersLine =
         p.quantityOffers && p.quantityOffers.length > 0
           ? `\n  OFERTA POR CANTIDAD ACTIVA: ${p.quantityOffers.map((o) => `${o.quantity} unidad${o.quantity > 1 ? 'es' : ''} por ${o.price}`).join(' / ')}`
           : '';
-      const productAssistantPrompt = getProductSaleMode(p) === 'prompt' && p.assistantPrompt
-        ? `\n  INSTRUCCIONES ESPECÍFICAS DE ESTE PRODUCTO (MODO CON PROMPT):\n  ${p.assistantPrompt}`
-        : '';
-      return `- ${p.name} | ${priceLine}\n  Detalle: ${p.details || '(sin detalle adicional)' }\n${videoLine}${offersLine}${productAssistantPrompt}`;
+      const productAssistantPrompt = p.sellerModeEnabled && getProductSaleMode(p) === 'prompt' && p.assistantPrompt
+        ? `\n  MODO VENDEDOR CON PROMPT PERSONALIZADO: SÍ`
+        : `\n  MODO VENDEDOR: ${p.sellerModeEnabled ? 'ACTIVO' : 'INACTIVO'}`;
+      return `- ${p.name} | ${priceLine}${priceRuleLine}\n  Detalle: ${p.details || '(sin detalle adicional)' }\n${videoLine}${offersLine}${firstContactLine}${productAssistantPrompt}`;
     })
     .join('\n');
 
@@ -3059,7 +3113,8 @@ function buildSystemPrompt(jid, overrideOrderData) {
   const fichaLines = [
     `Nombre: ${orderData.nombre || '(falta)'}`,
     `Teléfono: ${orderData.telefono || '(falta)'}`,
-    `Tipo de entrega: ${orderData.tipoEntrega || '(falta — preguntar domicilio u oficina)'}`,
+    `Tipo de entrega: ${orderData.tipoEntrega || '(falta — asume domicilio si no se menciona oficina)'}`,
+    orderData.tipoEntrega === 'oficina' ? `Transportadora/oficina: ${orderData.transportadora || '(falta)'}` : null,
     orderData.tipoEntrega !== 'oficina' ? `Dirección: ${orderData.direccion || '(falta)'}` : null,
     `Ciudad: ${orderData.ciudad || '(falta)'}`,
     `Departamento: ${orderData.departamento || '(falta)'}`,
@@ -3076,8 +3131,15 @@ Eres ${cfg.assistantName}, asistente virtual de ventas de ${cfg.companyName}, at
 
 ${cfg.baseInstructions}
 
-${isSellerModeEnabled(cfg) ? DEFAULT_SELLER_MODE_PROMPT : ''}
-${isFirstContact && cfg.firstContactPrompt ? `\nINSTRUCCIONES ESPECÍFICAS PARA EL PRIMER CONTACTO — APLÍCALAS SOLO EN ESTE PRIMER TURNO DEL CLIENTE:\n${cfg.firstContactPrompt}` : ''}
+${interestedProduct && interestedProduct.sellerModeEnabled ? DEFAULT_SELLER_MODE_PROMPT : ''}
+${interestedProduct && interestedProduct.sellerModeEnabled && getProductSaleMode(interestedProduct) === 'prompt' && interestedProduct.assistantPrompt ? `\nINSTRUCCIONES ESPECÍFICAS DE VENTA PARA ESTE PRODUCTO:\n${interestedProduct.assistantPrompt}` : ''}
+
+REGLA DE PRECIO Y OFERTA — OBLIGATORIA:
+Cuando el producto activo tenga precio anterior Y precio actual, SIEMPRE presenta primero el precio anterior tachado y después el precio actual como descuento. Nunca respondas solo con el precio actual. Usa este formato o uno visualmente equivalente:
+🔥 ~~ANTES: [PRECIO ANTERIOR]~~
+🎉 Hoy está en descuento: [PRECIO ACTUAL]
+🚚 Envío GRATIS + 💵 pago CONTRA ENTREGA.
+Después termina normalmente con una pregunta que impulse la conversación de compra. Si existe oferta por cantidad configurada, presenta también esa opción y el ahorro cuando sea posible. NUNCA inventes “solo por hoy”, “tiempo limitado”, “últimas unidades” o cualquier urgencia si no está configurada en el producto.
 
 REGLA DE CATÁLOGO — LA MÁS IMPORTANTE DE TODAS, NUNCA LA ROMPAS:
 Los ÚNICOS productos que existen son los que aparecen en el catálogo (más abajo en este mensaje). Si el cliente pregunta por algo que NO está en esa lista (otro producto, otro nombre, otra categoría), debes decir con claridad que no lo tienes disponible — NUNCA inventes un producto, nombre, precio, uso o característica que no esté escrito exactamente en el catálogo, así el cliente insista o describa algo que "suena parecido". Inventar un producto que no existe es el peor error que puedes cometer — genera confusión, pedidos que no se pueden cumplir, y hace quedar mal al negocio.
@@ -3087,7 +3149,7 @@ Igual de importante cuando hay VARIOS productos reales en el catálogo: cada det
 Si el cliente pregunta por un producto específico, responde con los detalles de ESE producto.
 Si pregunta en general, puedes mencionar brevemente los productos disponibles y preguntar cuál le interesa.
 
-Cuando el cliente pida ver fotos, imágenes o cómo se ve el producto, usa la función enviar_imagen_producto para enviarlas de verdad — manda también el parámetro "contexto" con lo que el cliente está preguntando en ese momento (ej. "precio", "modo de uso"), así se envía la foto correcta si el producto tiene varias configuradas para distintos momentos.
+Cuando el cliente pida ver fotos, imágenes o cómo se ve el producto, usa la función enviar_imagen_producto para enviarlas de verdad — manda también el parámetro "contexto" con la intención real del cliente. Si el cliente pregunta por modo de uso, cómo se usa, cómo se aplica, instrucciones, aplicación o una expresión equivalente, DEBES usar la herramienta con contexto de modo de uso para enviar la imagen configurada para esa intención, y luego explicar brevemente el modo de uso. No esperes a que diga "envíame la foto". Después de enviar una foto o video, no cierres diciendo solo "ya te la envié": explica lo útil y termina con una pregunta que ayude a avanzar hacia la compra.
 Cuando el cliente pida ver un video, una demostración o cómo funciona, usa la función enviar_video_producto — pero solo si el catálogo dice que ese producto SÍ tiene video disponible; si no lo tiene, dilo con naturalidad en vez de llamar la función.
 Nunca digas frases como "ya te la envío" o "aquí tienes la foto/video" si no llamaste a la función correspondiente — el cliente no recibirá nada si solo lo dices en texto.
 
@@ -3099,7 +3161,7 @@ Apenas quede claro de qué producto está hablando el cliente (así sea desde su
 
 REGLA DE ENTREGA — MUY IMPORTANTE (esta regla ANULA cualquier instrucción de arriba que diga que preguntes "¿domicilio u oficina?" como paso aparte):
 NO preguntes "¿cómo prefieres recibirlo?" como una pregunta separada. Cuando el cliente muestre intención clara de comprar, pide los datos de una vez (nombre, dirección, ciudad y departamento, teléfono) — asume domicilio por defecto, sin preguntarlo.
-Solo pasa a "oficina" si el cliente lo dice explícitamente ("prefiero recogerlo", "mejor en oficina"), o si menciona el nombre de una transportadora (ej. "Interrápidísimo", "Servientrega", "Coordinadora") en cualquier parte de su mensaje — en ese caso, entiende que es recogida en oficina, guarda tipoEntrega como "oficina" con actualizar_datos_pedido, y no pidas dirección (no hace falta para oficina). Todo esto puede venir junto en un solo mensaje del cliente (ej. "Camilo Ramírez, Villavicencio Meta, oficina Interrápidísimo, 3215761197") — reconoce todos los datos de ese bloque de una sola vez, no le pidas que los repita por separado.
+Solo pasa a "oficina" si el cliente lo dice explícitamente o menciona una transportadora. Debes reconocer errores de escritura y variantes como "Interrapidísimo", "Inter rapidísimo", "Antirrapidísimo", "antirrapidisimo", etc. En ese caso guarda tipoEntrega como "oficina" y la transportadora correspondiente, y NO pidas dirección exacta. Para oficina pide nombre, teléfono, departamento, ciudad/municipio, transportadora/oficina, producto y cantidad. Para domicilio pide dirección y barrio cuando corresponda. Todo esto puede venir junto en un solo mensaje del cliente (ej. "Camilo Ramírez, Villavicencio Meta, oficina Interrápidísimo, 3215761197") — reconoce todos los datos de ese bloque de una sola vez, no le pidas que los repita por separado.
 
 REGLA DE CANTIDAD — MUY IMPORTANTE:
 Si el cliente no menciona la cantidad, asume 1 unidad por defecto — no se lo preguntes como paso aparte, a menos que el producto tenga ofertas por cantidad activas, en cuyo caso sí conviene ofrecerle el combo antes de cerrar. ${offersInstructions}
@@ -3116,7 +3178,7 @@ Una dirección solo cuenta como completa si identifica una casa/unidad ESPECÍFI
 - Manzana y casa: "Manzana 15 Casa 27", "Mz 15 Cs 27"
 - Supermanzana y casa: "Supermanzana 3 Casa 12"
 NO son direcciones completas (pide que la complete, con un ejemplo del formato que necesitas): cruces sin número de casa ("Carrera 15 con 14"), o referencias sin número ("cerca al parque, casa amarilla"). Si la dirección que te dan ya trae un número que identifica la casa/unidad, acéptala tal cual la escribieron — no le exijas un formato exacto si ya es clara.
-Colombia tiene 32 departamentos — si el cliente solo dice la ciudad (ej. "Cumaral"), identifica tú el departamento correcto (ej. Meta) y guarda los dos por separado con actualizar_datos_pedido — nunca los mezcles en un solo campo. Ojo con estas formas cortas comunes — guarda siempre el nombre COMPLETO y exacto del departamento, no la forma corta que dice la gente: "Valle" → "Valle del Cauca" | "Bogotá" como departamento → "Cundinamarca" (Bogotá es la ciudad) | "San Andrés" → "San Andrés y Providencia" | "Norte" o "Norte Santander" → "Norte de Santander".
+UBICACIÓN EN COLOMBIA — OBLIGATORIA: la ciudad/municipio y el departamento deben existir y corresponder en colombia.json. Si el cliente solo da una ciudad válida, puedes obtener su departamento desde esa lista. Si la ciudad no existe, si el departamento no existe, o si la combinación no corresponde, NO guardes esos datos como válidos y pregunta de nuevo hasta obtener una ciudad/municipio y departamento que sí estén en la lista. No inventes ni adivines. Guarda los nombres oficiales devueltos por la lista. No cierres ni crees un pedido mientras la ubicación esté marcada como no validada.
 
 ${confirmBeforeClosing ? `REGLA DE CONFIRMACIÓN — ACTIVADA (esta regla ANULA cualquier otra instrucción de arriba que diga que cierres apenas tengas los datos completos):
 Tener todos los datos completos NO es suficiente para cerrar el pedido todavía. Antes de cerrar, cuando ya tengas TODOS los datos completos, PRIMERO repítele al cliente un resumen breve de todos los datos y pregúntale si están correctos — este paso es obligatorio, nunca lo saltes. SOLO cuando el cliente confirme que sí (diga "sí", "correcto", "así está bien" o similar) en un mensaje POSTERIOR a ese resumen, ahí sí cierra el pedido con la frase obligatoria. Si el cliente corrige algo en la confirmación, guarda la corrección con actualizar_datos_pedido y vuelve a mandar el resumen para confirmar de nuevo.` : `Apenas la ficha de datos esté completa (según lo que necesite el tipo de entrega elegido), cierra el pedido de una vez, sin pedir una confirmación extra.`}
@@ -3272,6 +3334,7 @@ function ensureClientRecord(jid) {
         departamento: '',
         ciudad: '',
         barrio: '',
+        transportadora: '',
         producto: '',
         cantidad: '',
         tipoEntrega: '', // "domicilio" | "oficina"
@@ -3280,6 +3343,7 @@ function ensureClientRecord(jid) {
       followUpsSent: [], // IDs de los mensajes de seguimiento/remarketing ya enviados
       scheduledDelivery: null, // { date: 'YYYY-MM-DD', reminderSent: false, reminderSentAt: null } — programación de entrega
       activeProductId: '', // producto cuyo asistente/contexto está activo
+      firstContactSentForProduct: {}, // evita repetir el primer contacto del mismo producto
     });
   } else {
     const rec = clients.get(jid);
@@ -3288,11 +3352,13 @@ function ensureClientRecord(jid) {
       // Cliente creado antes de este cambio — le agregamos la ficha vacía.
       rec.orderData = {
         nombre: '', telefono: '', direccion: '', departamento: '',
-        ciudad: '', barrio: '', producto: '', cantidad: '', tipoEntrega: '',
+        ciudad: '', barrio: '', transportadora: '', producto: '', cantidad: '', tipoEntrega: '',
       };
     }
     if (!rec.followUpsSent) rec.followUpsSent = [];
     if (rec.activeProductId === undefined) rec.activeProductId = '';
+    if (rec.orderData.transportadora === undefined) rec.orderData.transportadora = '';
+    if (!rec.firstContactSentForProduct || typeof rec.firstContactSentForProduct !== 'object') rec.firstContactSentForProduct = {};
   }
   saveClients();
   io.emit('clientUpdate', { jid, client: clients.get(jid) });
@@ -3471,12 +3537,56 @@ try {
 } catch (e) {
   console.error('No se pudo cargar colombia.json:', e);
 }
+function normalizeColombiaText(value) {
+  return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function findDepartmentForCity(cityName) {
-  if (!cityName) return null;
-  const normalized = cityName.trim().toLowerCase();
+  const normalized = normalizeColombiaText(cityName);
+  if (!normalized) return null;
   for (const [dept, cities] of Object.entries(colombiaData)) {
-    if (cities.some((c) => c.toLowerCase() === normalized)) return dept;
+    if (cities.some((c) => normalizeColombiaText(c) === normalized)) return dept;
   }
+  return null;
+}
+
+function isValidDepartment(department) {
+  const n = normalizeColombiaText(department);
+  return Object.keys(colombiaData).some((d) => normalizeColombiaText(d) === n);
+}
+
+function getOfficialDepartmentName(department) {
+  const n = normalizeColombiaText(department);
+  return Object.keys(colombiaData).find((d) => normalizeColombiaText(d) === n) || null;
+}
+
+function getOfficialCityName(cityName, department = '') {
+  const cn = normalizeColombiaText(cityName);
+  if (!cn) return null;
+  const deptName = department ? getOfficialDepartmentName(department) : findDepartmentForCity(cityName);
+  if (!deptName) return null;
+  const cities = colombiaData[deptName] || [];
+  return cities.find((c) => normalizeColombiaText(c) === cn) || null;
+}
+
+function validateAndNormalizeLocation(cityName, department = '') {
+  const city = getOfficialCityName(cityName, department);
+  if (!city) return { ok: false, reason: department ? `La ciudad "${cityName}" no está registrada en el departamento "${department}" en colombia.json.` : `La ciudad "${cityName}" no se encontró en colombia.json.` };
+  const officialDepartment = findDepartmentForCity(city);
+  if (department && normalizeColombiaText(officialDepartment) !== normalizeColombiaText(department)) {
+    return { ok: false, reason: `La ciudad "${city}" pertenece a "${officialDepartment}", no a "${department}".` };
+  }
+  return { ok: true, city, department: officialDepartment };
+}
+
+function detectOfficeTransportadora(text) {
+  const n = normalizeColombiaText(text);
+  if (!n) return null;
+  if (/inter\s*rapidisimo|interrapidisimo|interrapidimo|interrapido|antirrapidisimo|antirrapidimo/.test(n)) return 'Interrapidísimo';
+  if (/servientrega/.test(n)) return 'Servientrega';
+  if (/coordinadora/.test(n)) return 'Coordinadora';
+  if (/envia(?!r)?\b/.test(n)) return 'Envía';
+  if (/deprisa/.test(n)) return 'Deprisa';
   return null;
 }
 
@@ -3532,6 +3642,18 @@ async function autoCreateOrderFromSummary(jid, client, summary) {
   const od = client?.orderData || {};
   const phone = od.telefono || client?.phone || jid.split('@')[0];
 
+  const locationValidation = validateAndNormalizeLocation(od.ciudad, od.departamento);
+  if (!locationValidation.ok) {
+    io.emit('log', `🚫 Orden no creada para ${jid}: ubicación no validada en colombia.json`);
+    return null;
+  }
+  od.ciudad = locationValidation.city;
+  od.departamento = locationValidation.department;
+  if (od.tipoEntrega === 'oficina' && !od.transportadora) {
+    io.emit('log', `🚫 Orden no creada para ${jid}: falta transportadora/oficina`);
+    return null;
+  }
+
   // Si este mismo cliente (por su jid real, que no cambia aunque corrija
   // datos) ya tiene un pedido "pendiente" creado hace muy poco, lo tratamos
   // como una corrección de ese mismo pedido (ej. corrigió el teléfono o la
@@ -3555,6 +3677,7 @@ async function autoCreateOrderFromSummary(jid, client, summary) {
       city: od.ciudad || extractCityFromOrderText(summary) || recentPendingOrder.city,
       neighborhood: od.barrio || recentPendingOrder.neighborhood,
       deliveryType: od.tipoEntrega || recentPendingOrder.deliveryType,
+      transportadora: od.transportadora || recentPendingOrder.transportadora,
       rawSummary: summary,
     });
     io.emit('log', `✏️ Pedido ${recentPendingOrder.id} actualizado (el cliente corrigió un dato), no se creó uno nuevo`);
@@ -3586,6 +3709,7 @@ async function autoCreateOrderFromSummary(jid, client, summary) {
     city: od.ciudad || extractCityFromOrderText(summary) || '',
     neighborhood: od.barrio || '',
     deliveryType: od.tipoEntrega || 'domicilio',
+    transportadora: od.transportadora || '',
     status: 'pendiente',
     source: 'ia',
     rawSummary: summary,
@@ -3779,6 +3903,16 @@ async function startBot() {
       const isNewUser = !seenUsers.has(userId);
       seenUsers.add(userId);
 
+      const adReply = msg.message?.extendedTextMessage?.contextInfo?.externalAdReply
+        || msg.message?.imageMessage?.contextInfo?.externalAdReply
+        || msg.message?.videoMessage?.contextInfo?.externalAdReply
+        || null;
+      const isFromAd = !!adReply;
+      const adContextText = [adReply?.title, adReply?.body, adReply?.sourceUrl].filter(Boolean).join(' ');
+      const detectedProduct = detectProductFromText(
+        [msg.message?.conversation || msg.message?.extendedTextMessage?.text || '', adContextText].filter(Boolean).join(' ')
+      );
+
       const rawText =
         msg.message?.conversation ||
         msg.message?.extendedTextMessage?.text ||
@@ -3809,8 +3943,18 @@ async function startBot() {
 
       if (!messageText) return; // otro tipo de mensaje (sticker, ubicación, etc.) — lo ignoramos por ahora
 
+      // Para audios, la detección del producto también debe hacerse con la
+      // transcripción; de lo contrario una campaña podría quedar sin asistente
+      // de producto simplemente porque el cliente habló en vez de escribir.
+      const detectedProductAfterTranscription = detectProductFromText(
+        [messageText, adContextText].filter(Boolean).join(' ')
+      );
+
       // ---- Registrar en el CRM: se guarda SIEMPRE, esté pausado o no ----
       ensureClientRecord(userId);
+      if (detectedProduct || detectedProductAfterTranscription) {
+        activateProductFromMessage(userId, [messageText, adContextText].filter(Boolean).join(' '));
+      }
       advanceClientStageIfNeeded(userId);
       appendChatLog(userId, {
         from: 'client',
@@ -3822,6 +3966,12 @@ async function startBot() {
       // ---- Si el chat está pausado (interviniste manualmente), no respondemos automático ----
       if (isPaused(userId)) {
         io.emit('log', `⏸️ ${userId} está pausado, no respondo automático`);
+        return;
+      }
+
+      const activeProductForFirstContact = getActiveProduct(userId);
+      if (activeProductForFirstContact && await sendProductFirstContact(userId, activeProductForFirstContact, isFromAd)) {
+        io.emit('log', `🎯 Primer contacto del producto enviado: ${activeProductForFirstContact.name}`);
         return;
       }
 
@@ -3896,6 +4046,30 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
   }
   throw lastError;
 }
+
+  async function sendProductFirstContact(userId, product, isFromAd) {
+    if (!product?.firstContactEnabled || !product.firstContactMessage) return false;
+    ensureClientRecord(userId);
+    const client = clients.get(userId);
+    if (client.firstContactSentForProduct?.[product.id]) return false;
+    // Se dispara en una entrada de publicidad o en el primer contacto directo con un producto.
+    if (!isFromAd && client.messageCount > 1) return false;
+
+    await sendAndTrack(userId, { text: product.firstContactMessage });
+    appendChatLog(userId, { from: 'bot', text: product.firstContactMessage, type: 'text', timestamp: Date.now() });
+    for (const url of (product.firstContactImages || []).slice(0, 2)) {
+      const imgPath = path.join(__dirname, String(url).replace(/^\//, ''));
+      if (fs.existsSync(imgPath)) {
+        await sendAndTrack(userId, { image: fs.readFileSync(imgPath) });
+        appendChatLog(userId, { from: 'bot', text: '', type: 'image', mediaUrl: url, timestamp: Date.now() });
+      }
+    }
+    client.firstContactSentForProduct[product.id] = Date.now();
+    clients.set(userId, client);
+    saveClients();
+    io.emit('clientUpdate', { jid: userId, client });
+    return true;
+  }
 
   async function generateReplyForUser(userId, texts, isVoiceMessage) {
     try {
