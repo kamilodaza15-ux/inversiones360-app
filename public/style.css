@@ -925,3 +925,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#8b5cf6!import
 .fc-button-icon { font-size:18px; }
 .fc-button-input { flex:1; }
 .fc-button-response { width:100%; margin-top:8px; resize:vertical; box-sizing:border-box; }
+
+
+/* Cotizador de fletes Skydropx */
+.skydropx-quote-box{margin-top:12px;border:1px solid var(--border-color);border-radius:16px;padding:14px;background:linear-gradient(180deg,#f8fafc,#fff);box-shadow:0 8px 24px rgba(15,23,42,.07)}
+.skydropx-quote-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:14px}.skydropx-quote-head span{font-size:11px;padding:4px 8px;border-radius:999px;background:#eef2ff}
+.skydropx-credit{padding:9px 11px;border-radius:10px;background:#f0fdf4;margin-bottom:10px;font-size:13px}.skydropx-rates{display:flex;flex-direction:column;gap:7px}.skydropx-rate-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 11px;border:1px solid var(--border-color);border-radius:11px;background:#fff}.skydropx-rate-row.best{border-color:#86efac;box-shadow:0 2px 8px rgba(34,197,94,.08)}.skydropx-rate-row small{display:block;color:var(--muted-text,#64748b);margin-top:2px}.skydropx-quote-foot{font-size:11px;color:var(--muted-text,#64748b);margin-top:9px}
