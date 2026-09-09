@@ -1674,6 +1674,34 @@ document.getElementById('refreshStatusDropiBtn').addEventListener('click', async
   statusEl.textContent = res.ok ? `✔ Estado actualizado: ${res.status}` : res.error;
   if (res.ok) loadOrders();
 });
+
+document.getElementById('quoteSkydropxBtn').addEventListener('click', async () => {
+  if (!editingOrderId) return;
+  const statusEl = document.getElementById('uploadStatus');
+  const box = document.getElementById('skydropxQuoteBox');
+  statusEl.style.color = '';
+  statusEl.textContent = '🔎 Consultando tarifas en Skydropx...';
+  box.style.display = 'none';
+  try {
+    const res = await fetch(`/api/orders/${editingOrderId}/quote-skydropx`, { method: 'POST' }).then((r) => r.json());
+    if (!res.ok) throw new Error(res.error || 'No se pudo cotizar el flete.');
+    const money = (v) => '$' + Number(v || 0).toLocaleString('es-CO');
+    const rows = (res.rates || []).map((r, i) => `
+      <div class="skydropx-rate-row ${i === 0 ? 'best' : ''}">
+        <div><strong>${i === 0 ? '⭐ ' : ''}${escapeHtml(r.carrier || 'Transportadora')}</strong><small>${escapeHtml(r.service || 'Servicio de envío')}</small></div>
+        <strong>${money(r.total)}</strong>
+      </div>`).join('');
+    const credit = res.credits ? `<div class="skydropx-credit">💳 Saldo ${escapeHtml(res.credits.environment || res.environment || '')}: <strong>${money(res.credits.balance)} ${escapeHtml(res.credits.currency || '')}</strong></div>` : '';
+    box.innerHTML = `<div class="skydropx-quote-head"><strong>🚚 Cotización Skydropx</strong><span>${escapeHtml(res.environment || '')}</span></div>${credit}<div class="skydropx-rates">${rows}</div><div class="skydropx-quote-foot">⭐ La primera es la tarifa más económica disponible.</div>`;
+    box.style.display = 'block';
+    statusEl.style.color = '#16a34a';
+    statusEl.textContent = `✔ ${res.rates.length} tarifa(s) encontradas`;
+  } catch (e) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = e.message;
+  }
+});
+
 document.getElementById('uploadSkydropxBtn').addEventListener('click', async () => {
   if (!editingOrderId) return;
   const statusEl = document.getElementById('uploadStatus');
