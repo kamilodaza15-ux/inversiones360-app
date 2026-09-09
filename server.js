@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.32.2';
+const CURRENT_VERSION = '1.32.4';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1765,8 +1765,9 @@ async function getSkydropxDefaultAddressTemplate(cfg) {
     const normalized = list.map((x) => ({
       id: x?.id || x?.attributes?.id || '',
       default: Boolean(x?.default || x?.attributes?.default || x?.attributes?.is_default),
-      name: x?.attributes?.name || x?.name || '',
+      name: x?.attributes?.name || x?.name || x?.address?.name || '',
       alias: x?.attributes?.alias_name || x?.alias_name || '',
+      address: x?.address || x?.attributes?.address || null,
     })).filter((x) => x.id);
     return normalized.find((x) => x.default) || normalized[0] || null;
   } catch (e) {
@@ -1859,7 +1860,15 @@ async function quoteOrderWithSkydropx(order) {
   return {
     quotationId, rates, balance: null,
     environment: cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción',
-    origin: getSkydropxOriginSummary(cfg),
+    origin: originForRequest.template?.address ? {
+      name: originForRequest.template.address.name || originForRequest.template.name || '',
+      company: originForRequest.template.address.company || cfg.companyName || '',
+      street: originForRequest.template.address.street1 || '',
+      city: originForRequest.template.address.area_level2 || '',
+      state: originForRequest.template.address.area_level1 || '',
+      postalCode: originForRequest.template.address.postal_code || '',
+      reference: originForRequest.template.address.reference || '',
+    } : getSkydropxOriginSummary(cfg),
     originTemplateId: originForRequest.template?.id || '',
     originTemplateName: originForRequest.template?.name || originForRequest.template?.alias || '',
     package: SKYDROPX_STANDARD_PACKAGE,
@@ -2046,6 +2055,17 @@ async function autoUploadIfEnabled(order) {
   }
 }
 
+app.post('/api/integrations/dropi/test', async (req, res) => {
+  try {
+    const cfg = readConfig();
+    await dropiLogin(cfg);
+    const data = await dropiRequest(cfg, '/products/index', { method: 'POST', body: JSON.stringify({ page: 1, per_page: 1 }) });
+    res.json({ ok: true, message: 'Conexión con Dropi correcta.', hasProducts: Array.isArray(data?.data) ? data.data.length > 0 : undefined });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/api/orders/:id/upload-dropi', async (req, res) => {
   const order = orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -2087,6 +2107,16 @@ app.get('/api/dropi/search-products', async (req, res) => {
   }
 });
 
+
+app.get('/api/skydropx/default-address', async (req, res) => {
+  try {
+    const cfg = readConfig();
+    if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) return res.status(400).json({ ok: false, error: 'Faltan las credenciales de Skydropx.' });
+    const template = await getSkydropxDefaultAddressTemplate(cfg);
+    if (!template) return res.status(404).json({ ok: false, error: 'No se encontró una dirección guardada en Skydropx.' });
+    res.json({ ok: true, id: template.id, name: template.name, alias: template.alias, address: template.address || null });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
 
 app.post('/api/orders/:id/quote-skydropx', async (req, res) => {
   const order = orders.find((o) => o.id === req.params.id);
