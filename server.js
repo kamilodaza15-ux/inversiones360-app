@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.32.1';
+const CURRENT_VERSION = '1.32.2';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1778,7 +1778,20 @@ async function getSkydropxDefaultAddressTemplate(cfg) {
 async function getSkydropxOriginForRequest(cfg) {
   const template = await getSkydropxDefaultAddressTemplate(cfg);
   if (template?.id) return { template_id: template.id, template };
-  return { address: getSkydropxOriginConfig(cfg), template: null };
+  const address = getSkydropxOriginConfig(cfg);
+  const missing = ['street1', 'name', 'phone', 'email', 'reference'].filter((key) => !String(address[key] || '').trim());
+  if (missing.length) {
+    throw new Error(`No se encontró una dirección predeterminada de Skydropx y faltan datos de origen: ${missing.join(', ')}. Configura la dirección predeterminada en Skydropx o completa la dirección de origen en Configuración.`);
+  }
+  return { address, template: null };
+}
+
+function getOrderDeclaredTotal(order) {
+  const current = parseMoneyNumber(order?.price);
+  if (current > 0) return current;
+  const product = findProductByQuery(order?.product);
+  const total = getProductOrderTotalPrice(product, order?.quantity || 1);
+  return parseMoneyNumber(total);
 }
 
 async function quoteOrderWithSkydropx(order) {
@@ -1786,18 +1799,16 @@ async function quoteOrderWithSkydropx(order) {
   if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
     throw new Error('Falta configurar el Client ID y Client Secret de Skydropx en Configuración.');
   }
-  if (!cfg.skydropxOriginName || !cfg.skydropxOriginStreet || !cfg.skydropxOriginCity) {
-    throw new Error('Falta configurar la dirección de origen de tus envíos en Configuración → Skydropx.');
-  }
 
   const catalogProduct = findProductByQuery(order.product);
-  const declaredAmount = Number(String(order.price || '').replace(/[^\d]/g, '')) || 0;
+  const declaredAmount = getOrderDeclaredTotal(order);
   if (!declaredAmount) throw new Error('El pedido no tiene un precio válido para cotizar el flete en Skydropx.');
+  if (!parseMoneyNumber(order?.price)) updateOrder(order.id, { price: String(declaredAmount) });
 
   const originForRequest = await getSkydropxOriginForRequest(cfg);
   const quotationBody = {
     quotation: {
-      address_from: originForRequest.address || originForRequest.template_id ? (originForRequest.address || { template_id: originForRequest.template_id }) : getSkydropxOriginConfig(cfg),
+      address_from: originForRequest.template_id ? { template_id: originForRequest.template_id } : originForRequest.address,
       address_to: {
         country_code: 'CO', postal_code: order.postalCode || '',
         area_level1: order.department || '', area_level2: order.city || '',
@@ -1869,13 +1880,9 @@ async function uploadOrderToSkydropx(order, options = {}) {
   if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
     throw new Error('Falta configurar el Client ID y Client Secret de Skydropx en Configuración.');
   }
-  if (!cfg.skydropxOriginName || !cfg.skydropxOriginStreet || !cfg.skydropxOriginCity) {
-    throw new Error('Falta configurar la dirección de origen de tus envíos en Configuración → Skydropx.');
-  }
-
   const catalogProduct = findProductByQuery(order.product);
 
-  const declaredAmount = Number(String(order.price || '').replace(/[^\d]/g, '')) || 0;
+  const declaredAmount = getOrderDeclaredTotal(order);
   if (!declaredAmount) {
     throw new Error('El pedido no tiene un precio válido para el valor declarado de Skydropx.');
   }
@@ -1954,7 +1961,7 @@ async function uploadOrderToSkydropx(order, options = {}) {
     shipment: {
       rate_id: rateId,
       unique_shipment: true,
-      address_from: originForShipment.address || originForShipment.template_id ? (originForShipment.address || { template_id: originForShipment.template_id }) : getSkydropxOriginConfig(cfg),
+      address_from: originForShipment.template_id ? { template_id: originForShipment.template_id } : originForShipment.address,
       address_to: {
         country_code: 'CO',
         postal_code: order.postalCode || '',
