@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.31.1';
+const CURRENT_VERSION = '1.31.2';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1626,7 +1626,10 @@ async function skydropxRequest(cfg, path, options = {}, retry401 = true) {
   }
 
   if (!res.ok) {
-    throw new Error(data.error_description || data.error || data.message || `HTTP ${res.status}`);
+    const detail = data.errors || data.error_description || data.error || data.message || `HTTP ${res.status}`;
+    let detailText;
+    try { detailText = typeof detail === 'string' ? detail : JSON.stringify(detail); } catch (_) { detailText = String(detail); }
+    throw new Error(`Skydropx HTTP ${res.status}: ${detailText.slice(0, 2000)}`);
   }
   if (data.error) {
     throw new Error(data.error_description || data.error);
@@ -1672,6 +1675,11 @@ async function uploadOrderToSkydropx(order) {
   const skydropxDims = await getSkydropxProductDimensions(cfg, catalogProduct?.skydropxProductId);
 
   // ---- Paso 1: cotizar ----
+  const declaredAmount = Number(String(order.price || '').replace(/[^\d.]/g, '')) || 0;
+  if (!declaredAmount) {
+    throw new Error('El pedido no tiene un precio válido para el valor declarado de Skydropx.');
+  }
+
   const quotationBody = {
     quotation: {
       address_from: {
@@ -1704,10 +1712,13 @@ async function uploadOrderToSkydropx(order) {
           width: skydropxDims?.width || Number(cfg.skydropxDefaultWidthCm) || 20,
           height: skydropxDims?.height || Number(cfg.skydropxDefaultHeightCm) || 10,
           quantity: 1,
+          declared_amount: declaredAmount,
           dimension_unit: 'CM',
           mass_unit: 'KG',
         },
       ],
+      cash_on_delivery: true,
+      recipient_pays_shipping: false,
     },
   };
 
@@ -1723,13 +1734,17 @@ async function uploadOrderToSkydropx(order) {
   // ---- Paso 2: la cotización se completa de a poco — se revisa unas veces, esperando un poco entre cada una ----
   let quotationData = quotationRes;
   for (let i = 0; i < 6; i++) {
-    const isCompleted = quotationData?.data?.attributes?.status === 'completed';
+    const isCompleted = quotationData?.is_completed === true || quotationData?.data?.attributes?.status === 'completed';
     if (isCompleted) break;
     await sleep(2000);
     quotationData = await skydropxRequest(cfg, `/api/v1/quotations/${quotationId}`);
   }
 
-  const rates = (quotationData.included || []).filter((item) => item.type === 'rate' && item.attributes?.success);
+  const rates = Array.isArray(quotationData?.rates)
+    ? quotationData.rates.filter((r) => r?.success)
+    : (quotationData?.included || [])
+        .filter((item) => item.type === 'rate' && item.attributes?.success)
+        .map((item) => ({ id: item.id, ...item.attributes }));
   if (rates.length === 0) {
     throw new Error('Skydropx no encontró ninguna tarifa disponible para esta dirección.');
   }
@@ -1738,18 +1753,62 @@ async function uploadOrderToSkydropx(order) {
   // precio) — a domicilio, la tarifa más barata entre todas las que sirvieron.
   let bestRate;
   if (order.deliveryType === 'oficina') {
-    bestRate = rates.find((r) => (r.attributes.provider_name || '').toLowerCase().includes('interrapidisimo'));
+    bestRate = rates.find((r) => String(r.provider_name || r.attributes?.provider_name || '').toLowerCase().includes('interrapidisimo'));
     if (!bestRate) {
       throw new Error('Este pedido es para recogida en oficina, pero Skydropx no ofreció ninguna tarifa de Interrápidísimo para esta dirección.');
     }
   } else {
-    bestRate = rates.reduce((a, b) => (Number(a.attributes.total) <= Number(b.attributes.total) ? a : b));
+    bestRate = rates.reduce((a, b) => (Number(a.total ?? a.attributes?.total) <= Number(b.total ?? b.attributes?.total) ? a : b));
   }
 
   // ---- Paso 3: crear el envío con la tarifa elegida ----
-  const shipmentRes = await skydropxRequest(cfg, '/api/v1/shipments', {
+  const rateId = bestRate.id;
+  if (!rateId) throw new Error('Skydropx no devolvió un rate_id válido.');
+
+  const shipmentBody = {
+    shipment: {
+      rate_id: rateId,
+      unique_shipment: true,
+      address_from: {
+        country_code: 'CO',
+        postal_code: cfg.skydropxOriginPostalCode || '',
+        area_level1: cfg.skydropxOriginState || '',
+        area_level2: cfg.skydropxOriginCity || '',
+        street1: cfg.skydropxOriginStreet,
+        name: cfg.skydropxOriginName,
+        company: cfg.companyName || 'Inversiones 360 Store',
+        phone: cfg.skydropxOriginPhone || '',
+        email: cfg.skydropxOriginEmail || 'no-reply@example.com',
+        reference: cfg.skydropxOriginReference || 'Sin referencia',
+      },
+      address_to: {
+        country_code: 'CO',
+        postal_code: order.postalCode || '',
+        area_level1: order.department || '',
+        area_level2: order.city || '',
+        street1: order.address || order.city || '',
+        name: order.clientName || 'Cliente',
+        company: 'Cliente',
+        phone: order.clientPhone || '',
+        email: 'cliente@example.com',
+        reference: order.neighborhood || 'Sin referencia',
+      },
+      packages: [{
+        package_number: '1',
+        package_protected: false,
+        declared_value: declaredAmount,
+      }],
+    },
+  };
+
+  if (cfg.skydropxUseTestEnv) shipmentBody.shipment.auto_advance = true;
+  if (order.deliveryType === 'oficina') {
+    throw new Error('El pedido es para oficina. Primero debemos seleccionar el punto de oficina de Skydropx para crear la guía.');
+  }
+
+  const shipmentRes = await skydropxRequest(cfg, '/api/v1/shipments/', {
     method: 'POST',
-    body: JSON.stringify({ quotation_id: quotationId, rate_id: bestRate.id }),
+    body: JSON.stringify(shipmentBody),
   });
   const shipmentId = shipmentRes?.data?.id;
   if (!shipmentId) {
@@ -1758,7 +1817,7 @@ async function uploadOrderToSkydropx(order) {
 
   await markOrderConfirmedAndNotify(order.id, {
     skydropxShipmentId: shipmentId,
-    transportadora: bestRate.attributes.provider_display_name || bestRate.attributes.provider_name || '',
+    transportadora: bestRate.provider_display_name || bestRate.provider_name || bestRate.attributes?.provider_display_name || bestRate.attributes?.provider_name || '',
   });
   return shipmentRes.data;
 }
