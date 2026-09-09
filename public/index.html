@@ -733,11 +733,16 @@
 
       <!-- Detalle de pedido -->
       <div id="orderDetailOverlay" class="modal-overlay" style="display:none">
-        <div class="modal-box">
-          <div style="display:flex;align-items:center;gap:8px">
-            <h2 id="orderDetailTitle" style="margin:0">Pedido</h2>
-            <button id="goToOrderChatBtn" class="cancel-btn order-nav-btn" style="margin-top:0">💬 Ir al chat</button>
-            <button id="closeOrderDetailBtn" class="cancel-btn" style="margin-top:0;margin-left:auto">✕</button>
+        <div class="modal-box order-detail-modal">
+          <div class="order-detail-header">
+            <div>
+              <h2 id="orderDetailTitle" style="margin:0">Pedido</h2>
+              <span class="order-detail-subtitle">Datos del pedido y cotización</span>
+            </div>
+            <div class="order-detail-header-actions">
+              <button id="goToOrderChatBtn" class="cancel-btn order-nav-btn" style="margin-top:0">💬 Ir al chat</button>
+            <button id="closeOrderDetailBtn" class="cancel-btn" style="margin-top:0">✕</button>
+            </div>
           </div>
           <label>Nombre del cliente</label>
           <input id="od-clientName" type="text" />
