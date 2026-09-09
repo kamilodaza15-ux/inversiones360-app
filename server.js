@@ -27,7 +27,7 @@ async function loadBaileys() {
 // a tu repo de GitHub, y 2) subes el número de "version" en latest.json para
 // que coincida con el que pongas aquí abajo (CURRENT_VERSION). El botón del
 // panel compara ambos números para saber si hay algo nuevo.
-const CURRENT_VERSION = '1.31.9';
+const CURRENT_VERSION = '1.32.0';
 const UPDATE_MANIFEST_URL =
   'https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/latest.json';
 
@@ -1469,7 +1469,7 @@ async function uploadOrderToDropi(order) {
 // un solo lugar compartido, para que sea imposible que a una integración
 // nueva se le olvide pasar a "Confirmado" y mandar el comprobante.
 async function markOrderConfirmedAndNotify(orderId, extraFields) {
-  updateOrder(orderId, { status: 'confirmado', ...extraFields });
+  updateOrder(orderId, { status: 'confirmado', uploadErrorProvider: '', uploadErrorMessage: '', uploadErrorAt: null, ...extraFields });
   await sendOrderPdfIfNeeded(orders.find((o) => o.id === orderId));
 }
 
@@ -1724,6 +1724,36 @@ async function getSkydropxProductDimensions(cfg, skydropxProductId) {
 }
 
 
+const SKYDROPX_STANDARD_PACKAGE = Object.freeze({ weight: 1, length: 30, width: 30, height: 30 });
+
+function getSkydropxOriginConfig(cfg) {
+  const origin = {
+    country_code: 'CO',
+    area_level1: cfg.skydropxOriginState || '',
+    area_level2: cfg.skydropxOriginCity || '',
+    street1: cfg.skydropxOriginStreet || '',
+    name: cfg.skydropxOriginName || '',
+    company: cfg.companyName || '',
+    phone: cfg.skydropxOriginPhone || '',
+    email: cfg.skydropxOriginEmail || '',
+    reference: cfg.skydropxOriginReference || 'Sin referencia',
+  };
+  if (String(cfg.skydropxOriginPostalCode || '').trim()) origin.postal_code = String(cfg.skydropxOriginPostalCode).trim();
+  return origin;
+}
+
+function getSkydropxOriginSummary(cfg) {
+  return {
+    name: cfg.skydropxOriginName || '',
+    company: cfg.companyName || '',
+    street: cfg.skydropxOriginStreet || '',
+    city: cfg.skydropxOriginCity || '',
+    state: cfg.skydropxOriginState || '',
+    postalCode: cfg.skydropxOriginPostalCode || '',
+    reference: cfg.skydropxOriginReference || '',
+  };
+}
+
 async function quoteOrderWithSkydropx(order) {
   const cfg = readConfig();
   if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
@@ -1734,19 +1764,12 @@ async function quoteOrderWithSkydropx(order) {
   }
 
   const catalogProduct = findProductByQuery(order.product);
-  const skydropxDims = await getSkydropxProductDimensions(cfg, catalogProduct?.skydropxProductId);
   const declaredAmount = Number(String(order.price || '').replace(/[^\d]/g, '')) || 0;
   if (!declaredAmount) throw new Error('El pedido no tiene un precio válido para cotizar el flete en Skydropx.');
 
   const quotationBody = {
     quotation: {
-      address_from: {
-        country_code: 'CO', postal_code: cfg.skydropxOriginPostalCode || '',
-        area_level1: cfg.skydropxOriginState || '', area_level2: cfg.skydropxOriginCity || '',
-        street1: cfg.skydropxOriginStreet, name: cfg.skydropxOriginName, company: cfg.companyName || '',
-        phone: cfg.skydropxOriginPhone || '', email: cfg.skydropxOriginEmail || '',
-        reference: cfg.skydropxOriginReference || 'Sin referencia',
-      },
+      address_from: getSkydropxOriginConfig(cfg),
       address_to: {
         country_code: 'CO', postal_code: order.postalCode || '',
         area_level1: order.department || '', area_level2: order.city || '',
@@ -1754,10 +1777,10 @@ async function quoteOrderWithSkydropx(order) {
         phone: order.clientPhone || '', email: 'cliente@example.com', reference: order.neighborhood || 'Sin referencia',
       },
       parcels: [{
-        weight: skydropxDims?.weight || Number(cfg.skydropxDefaultWeightKg) || 1,
-        length: skydropxDims?.length || Number(cfg.skydropxDefaultLengthCm) || 20,
-        width: skydropxDims?.width || Number(cfg.skydropxDefaultWidthCm) || 20,
-        height: skydropxDims?.height || Number(cfg.skydropxDefaultHeightCm) || 10,
+        weight: SKYDROPX_STANDARD_PACKAGE.weight,
+        length: SKYDROPX_STANDARD_PACKAGE.length,
+        width: SKYDROPX_STANDARD_PACKAGE.width,
+        height: SKYDROPX_STANDARD_PACKAGE.height,
         quantity: 1, declared_amount: declaredAmount,
         package_content: String(order.product || catalogProduct?.name || 'Producto').slice(0, 200),
         package_type: 'package', dimension_unit: 'CM', mass_unit: 'KG',
@@ -1794,7 +1817,12 @@ async function quoteOrderWithSkydropx(order) {
 
   if (!rates.length) throw new Error('Skydropx no encontró tarifas disponibles para esta dirección.');
   rates.sort((a,b) => a.total - b.total);
-  return { quotationId, rates, balance: null, environment: cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción' };
+  return {
+    quotationId, rates, balance: null,
+    environment: cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción',
+    origin: getSkydropxOriginSummary(cfg),
+    package: SKYDROPX_STANDARD_PACKAGE,
+  };
 }
 
 async function getSkydropxCredits() {
@@ -1805,7 +1833,8 @@ async function getSkydropxCredits() {
   return { balance: Number(source?.balance ?? source?.credits ?? source?.available_balance) || 0, currency: source?.currency || 'COP', environment: cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción' };
 }
 
-async function uploadOrderToSkydropx(order) {
+async function uploadOrderToSkydropx(order, options = {}) {
+  const autoMode = options.autoMode === true;
   const cfg = readConfig();
   if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
     throw new Error('Falta configurar el Client ID y Client Secret de Skydropx en Configuración.');
@@ -1814,11 +1843,7 @@ async function uploadOrderToSkydropx(order) {
     throw new Error('Falta configurar la dirección de origen de tus envíos en Configuración → Skydropx.');
   }
 
-  // Si el producto de este pedido ya está vinculado a un producto de
-  // Skydropx, se jalan sus medidas reales — si no, se usan las de respaldo
-  // configuradas a mano.
   const catalogProduct = findProductByQuery(order.product);
-  const skydropxDims = await getSkydropxProductDimensions(cfg, catalogProduct?.skydropxProductId);
 
   const declaredAmount = Number(String(order.price || '').replace(/[^\d]/g, '')) || 0;
   if (!declaredAmount) {
@@ -1850,30 +1875,29 @@ async function uploadOrderToSkydropx(order) {
   }
 
   let bestRate = null;
-  if (order.skydropxSelectedRateId) {
+  if (autoMode) {
+    if (order.deliveryType === 'oficina') {
+      const carrierText = (r) => [
+        r?.carrier, r?.provider_name, r?.carrier_name, r?.provider_display_name, r?.attributes?.provider_name,
+        r?.attributes?.carrier_name, r?.attributes?.provider_display_name
+      ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      bestRate = rates.find((r) => carrierText(r).includes('interrapidisimo') || carrierText(r).includes('inter rapidisimo')) || null;
+      if (!bestRate) throw new Error('Pedido para oficina: Skydropx no devolvió una tarifa de Interrapidísimo disponible.');
+    } else {
+      bestRate = rates.reduce((a, b) => Number(a.total) <= Number(b.total) ? a : b);
+    }
+    updateOrder(order.id, {
+      skydropxSelectedRateId: bestRate.id,
+      skydropxSelectedRate: bestRate,
+      transportadora: bestRate.carrier || '',
+      skydropxStatus: 'tarifa_seleccionada',
+    });
+  } else {
+    if (!order.skydropxSelectedRateId) {
+      throw new Error('Selecciona una tarifa de Skydropx antes de subir el pedido.');
+    }
     bestRate = rates.find((r) => String(r.id) === String(order.skydropxSelectedRateId)) || null;
-    if (!bestRate) {
-      throw new Error('La tarifa seleccionada ya no está en la cotización guardada. Vuelve a cotizar el flete y selecciona una tarifa.');
-    }
-  }
-
-  // Si todavía no hay selección, mantenemos el comportamiento anterior:
-  // domicilio usa la más económica; oficina prioriza Interrápidísimo.
-  if (!bestRate && order.deliveryType === 'oficina') {
-    const carrierText = (r) => [
-      r?.provider_name, r?.carrier_name, r?.provider_display_name, r?.attributes?.provider_name,
-      r?.attributes?.carrier_name, r?.attributes?.provider_display_name
-    ].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    bestRate = rates.find((r) => {
-      const name = carrierText(r);
-      return name.includes('interrapidisimo') || name.includes('inter rapidisimo');
-    }) || null;
-    if (!bestRate) {
-      throw new Error('Este pedido es para recogida en oficina, pero no hay una tarifa de Interrápidísimo disponible en la cotización guardada.');
-    }
-  }
-  if (!bestRate) {
-    bestRate = rates.reduce((a, b) => (Number(a.total ?? a.attributes?.total) <= Number(b.total ?? b.attributes?.total) ? a : b));
+    if (!bestRate) throw new Error('La tarifa seleccionada ya no está en la cotización guardada. Vuelve a cotizar el flete y selecciona una tarifa.');
   }
 
   // ---- Paso 3: crear el envío con la tarifa elegida ----
@@ -1899,18 +1923,7 @@ async function uploadOrderToSkydropx(order) {
     shipment: {
       rate_id: rateId,
       unique_shipment: true,
-      address_from: {
-        country_code: 'CO',
-        postal_code: cfg.skydropxOriginPostalCode || '',
-        area_level1: cfg.skydropxOriginState || '',
-        area_level2: cfg.skydropxOriginCity || '',
-        street1: cfg.skydropxOriginStreet,
-        name: cfg.skydropxOriginName,
-        company: cfg.companyName || 'Inversiones 360 Store',
-        phone: cfg.skydropxOriginPhone || '',
-        email: cfg.skydropxOriginEmail || 'no-reply@example.com',
-        reference: cfg.skydropxOriginReference || 'Sin referencia',
-      },
+      address_from: getSkydropxOriginConfig(cfg),
       address_to: {
         country_code: 'CO',
         postal_code: order.postalCode || '',
@@ -1962,6 +1975,18 @@ async function uploadOrderToSkydropx(order) {
 // se crea un pedido nuevo — sin que nadie tenga que ir a darle clic. Falla
 // en silencio (solo queda en el log) mientras no tengamos la API real, para
 // no interrumpir el resto del flujo del pedido.
+function markOrderUploadError(orderId, provider, err) {
+  const status = provider === 'dropi' ? 'error_dropi' : 'error_skydropx';
+  const message = String(err?.message || err || 'Error desconocido').slice(0, 1000);
+  updateOrder(orderId, {
+    status,
+    uploadErrorProvider: provider,
+    uploadErrorMessage: message,
+    uploadErrorAt: Date.now(),
+    ...(provider === 'dropi' ? { dropiStatus: 'error' } : { skydropxStatus: 'error' }),
+  });
+}
+
 async function autoUploadIfEnabled(order) {
   const cfg = readConfig();
   if (cfg.autoUploadProvider === 'dropi') {
@@ -1969,13 +1994,15 @@ async function autoUploadIfEnabled(order) {
       await uploadOrderToDropi(order);
       io.emit('log', `🚀 Pedido ${order.id} subido automático a Dropi`);
     } catch (err) {
+      markOrderUploadError(order.id, 'dropi', err);
       io.emit('log', `⚠️ No se pudo subir automático a Dropi (${order.id}): ${err.message}`);
     }
   } else if (cfg.autoUploadProvider === 'skydropx') {
     try {
-      await uploadOrderToSkydropx(order);
+      await uploadOrderToSkydropx(order, { autoMode: true });
       io.emit('log', `🚀 Pedido ${order.id} subido automático a Skydropx`);
     } catch (err) {
+      markOrderUploadError(order.id, 'skydropx', err);
       io.emit('log', `⚠️ No se pudo subir automático a Skydropx (${order.id}): ${err.message}`);
     }
   }
@@ -1988,6 +2015,7 @@ app.post('/api/orders/:id/upload-dropi', async (req, res) => {
     await uploadOrderToDropi(order);
     res.json({ ok: true });
   } catch (err) {
+    markOrderUploadError(order.id, 'dropi', err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -2049,7 +2077,7 @@ app.post('/api/orders/:id/quote-skydropx', async (req, res) => {
       skydropxStatus: 'cotizado',
     });
     const saved = orders.find((o) => o.id === order.id);
-    res.json({ ok: true, quotationId: quote.quotationId, rates: safeRates, selectedRate: selected, credits, environment: quote.environment, order: saved });
+    res.json({ ok: true, quotationId: quote.quotationId, rates: safeRates, selectedRate: selected, credits, environment: quote.environment, origin: quote.origin, package: quote.package, order: saved });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -2088,6 +2116,7 @@ app.post('/api/orders/:id/upload-skydropx', async (req, res) => {
     await uploadOrderToSkydropx(order);
     res.json({ ok: true });
   } catch (err) {
+    markOrderUploadError(order.id, 'skydropx', err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -2491,17 +2520,49 @@ function handleUpdateOrderData(jid, args) {
   }
 
   // Validación estricta: nunca guardamos una ciudad que no exista en colombia.json.
-  const city = incoming.ciudad !== undefined ? String(incoming.ciudad).trim() : client.orderData.ciudad;
-  const dept = incoming.departamento !== undefined ? String(incoming.departamento).trim() : client.orderData.departamento;
-  if (city) {
-    const validation = validateAndNormalizeLocation(city, dept);
-    if (!validation.ok) {
-      return `UBICACION_NO_VALIDADA: ${validation.reason} No guardé la ciudad. Pide al cliente el nombre exacto de la ciudad/municipio y, si hace falta, el departamento hasta encontrar una combinación válida en colombia.json.`;
+  // IMPORTANTE: si la ubicación llega mal escrita, NO descartamos los demás
+  // datos válidos del mismo mensaje. Así nombre/dirección/teléfono/cantidad
+  // quedan guardados y, cuando el cliente corrige la ciudad, solo se actualiza
+  // ciudad/departamento sin volver a pedir lo que ya estaba en la ficha.
+  let locationError = '';
+  const cityRaw = incoming.ciudad !== undefined ? String(incoming.ciudad).trim() : client.orderData.ciudad;
+  const deptRaw = incoming.departamento !== undefined ? String(incoming.departamento).trim() : client.orderData.departamento;
+  if (cityRaw) {
+    let cityForValidation = cityRaw;
+    let deptForValidation = deptRaw;
+
+    // Acepta entradas naturales como "Palmira Valle del Cauca" y las separa
+    // automáticamente en municipio + departamento.
+    if (!deptForValidation) {
+      const normalizedLocation = normalizeColombiaText(cityRaw);
+      for (const deptName of Object.keys(colombiaData)) {
+        const normalizedDept = normalizeColombiaText(deptName);
+        if (normalizedLocation.endsWith(` ${normalizedDept}`)) {
+          const possibleCity = normalizedLocation.slice(0, -normalizedDept.length).trim();
+          const officialCity = getOfficialCityName(possibleCity, deptName);
+          if (officialCity) {
+            cityForValidation = officialCity;
+            deptForValidation = deptName;
+            break;
+          }
+        }
+      }
     }
-    incoming.ciudad = validation.city;
-    incoming.departamento = validation.department;
-  } else if (dept && !isValidDepartment(dept)) {
-    return `UBICACION_NO_VALIDADA: El departamento "${dept}" no aparece en colombia.json. No lo guardé. Pide al cliente el nombre exacto del departamento.`;
+
+    const validation = validateAndNormalizeLocation(cityForValidation, deptForValidation);
+    if (!validation.ok) {
+      locationError = `UBICACION_NO_VALIDADA: ${validation.reason} No guardé la ciudad. Pide al cliente el nombre exacto de la ciudad/municipio y, si hace falta, el departamento hasta encontrar una combinación válida en colombia.json.`;
+      delete incoming.ciudad;
+      // Si el departamento enviado por separado sí es válido, lo conservamos.
+      if (deptRaw && isValidDepartment(deptRaw)) incoming.departamento = getOfficialDepartmentName(deptRaw);
+      else delete incoming.departamento;
+    } else {
+      incoming.ciudad = validation.city;
+      incoming.departamento = validation.department;
+    }
+  } else if (deptRaw && !isValidDepartment(deptRaw)) {
+    locationError = `UBICACION_NO_VALIDADA: El departamento "${deptRaw}" no aparece en colombia.json. No lo guardé. Pide al cliente el nombre exacto del departamento.`;
+    delete incoming.departamento;
   }
 
   const fields = ['nombre', 'telefono', 'direccion', 'departamento', 'ciudad', 'barrio', 'transportadora', 'producto', 'cantidad', 'tipoEntrega'];
@@ -2519,6 +2580,7 @@ function handleUpdateOrderData(jid, args) {
   clients.set(jid, client);
   saveClients();
   io.emit('clientUpdate', { jid, client });
+  if (locationError) return `Datos válidos guardados. ${locationError} ${describeMissingOrderFields(client.orderData)}`;
   return `Datos guardados. ${describeMissingOrderFields(client.orderData)}`;
 }
 
@@ -3730,6 +3792,7 @@ function ensureClientRecord(jid) {
     if (rec.activeProductId === undefined) rec.activeProductId = '';
     if (rec.orderData.transportadora === undefined) rec.orderData.transportadora = '';
     if (!rec.firstContactSentForProduct || typeof rec.firstContactSentForProduct !== 'object') rec.firstContactSentForProduct = {};
+    if (!rec.primaryProductImageSentForProduct || typeof rec.primaryProductImageSentForProduct !== 'object') rec.primaryProductImageSentForProduct = {};
     if (!rec.pendingInteractiveButtons || typeof rec.pendingInteractiveButtons !== 'object') rec.pendingInteractiveButtons = {};
   }
   saveClients();
@@ -3849,6 +3912,32 @@ function extractPriceFromOrderText(text) {
   const match = (text || '').match(/precio[:\s]*\$?\s?([\d.,]+)/i);
   return match ? match[1].trim() : null;
 }
+
+// Obtiene el precio real del producto del catálogo cuando la IA no lo escribió
+// explícitamente en el resumen de cierre. Así un pedido creado automáticamente
+// nunca queda sin precio solo porque el resumen dijo el nombre del producto.
+function parseMoneyNumber(value) {
+  const n = Number(String(value ?? '').replace(/[^\d]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+// El precio que se guarda en un pedido es SIEMPRE el TOTAL de lo comprado.
+// Si existe una oferta exacta por cantidad, su precio se considera el total
+// de esa oferta (por ejemplo, 2 unidades por $180.000). Si no existe oferta,
+// se multiplica el precio unitario del producto por la cantidad real.
+function getProductOrderTotalPrice(product, quantity) {
+  if (!product) return '';
+  const qty = Math.max(1, Number.parseInt(String(quantity ?? 1), 10) || 1);
+  const offers = Array.isArray(product.quantityOffers) ? product.quantityOffers : [];
+  const exactOffer = offers.find((o) => Number(o?.quantity) === qty && o?.price !== undefined && o?.price !== null && String(o.price).trim() !== '');
+  if (exactOffer) {
+    const offerTotal = parseMoneyNumber(exactOffer.price);
+    return offerTotal > 0 ? String(offerTotal) : '';
+  }
+  const unitPrice = parseMoneyNumber(product.priceAfter ?? product.priceBefore);
+  if (!unitPrice) return '';
+  return String(unitPrice * qty);
+}
 function extractAddressFromOrderText(text) {
   const match = (text || '').match(/direcci[oó]n[:\s]*([^\n🏙️📱💰🛍️]{3,100})/i);
   return match ? match[1].trim() : null;
@@ -3870,6 +3959,8 @@ const ORDER_STATUS_LABELS = {
   interesado: 'Interesado',
   comprado: 'Compra confirmada',
   confirmado: 'Confirmado', // solo de Pedidos — se activa al subir a Dropi/Skydropx
+  error_dropi: 'Error al subir a Dropi',
+  error_skydropx: 'Error al subir a Skydropx',
   guia_generada: 'Guía generada',
   en_camino: 'En camino',
   con_novedad: 'Con novedad',
@@ -3993,6 +4084,9 @@ function createOrder(fields) {
     skydropxSelectedRate: fields.skydropxSelectedRate || null,
     skydropxEnvironment: fields.skydropxEnvironment || '',
     skydropxCredits: fields.skydropxCredits || null,
+    uploadErrorProvider: fields.uploadErrorProvider || '',
+    uploadErrorMessage: fields.uploadErrorMessage || '',
+    uploadErrorAt: fields.uploadErrorAt || null,
     possibleDuplicateOf: fields.possibleDuplicateOf || null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -4022,6 +4116,8 @@ async function autoCreateOrderFromSummary(jid, client, summary) {
   // extraído queda solo como respaldo si algún campo no se llegó a guardar.
   const od = client?.orderData || {};
   const phone = od.telefono || client?.phone || jid.split('@')[0];
+  const catalogProduct = findProductByQuery(od.producto || extractProductFromOrderText(summary));
+  const resolvedPrice = getProductOrderTotalPrice(catalogProduct, od.cantidad || 1);
 
   const locationValidation = validateAndNormalizeLocation(od.ciudad, od.departamento);
   if (!locationValidation.ok) {
@@ -4052,7 +4148,7 @@ async function autoCreateOrderFromSummary(jid, client, summary) {
       clientPhone: phone,
       product: od.producto || extractProductFromOrderText(summary) || recentPendingOrder.product,
       quantity: od.cantidad || recentPendingOrder.quantity,
-      price: extractPriceFromOrderText(summary) || recentPendingOrder.price,
+      price: resolvedPrice || recentPendingOrder.price,
       address: od.direccion || extractAddressFromOrderText(summary) || recentPendingOrder.address,
       department: od.departamento || recentPendingOrder.department,
       city: od.ciudad || extractCityFromOrderText(summary) || recentPendingOrder.city,
@@ -4084,7 +4180,7 @@ async function autoCreateOrderFromSummary(jid, client, summary) {
     clientPhone: phone,
     product: od.producto || extractProductFromOrderText(summary) || '',
     quantity: od.cantidad || 1,
-    price: extractPriceFromOrderText(summary) || '',
+    price: resolvedPrice || '',
     address: od.direccion || extractAddressFromOrderText(summary) || '',
     department: od.departamento || '',
     city: od.ciudad || extractCityFromOrderText(summary) || '',
@@ -4392,6 +4488,18 @@ async function startBot() {
         return;
       }
 
+      // Si el producto fue detectado en ESTE mensaje y no tiene Primer contacto
+      // activado, mostramos automáticamente su imagen principal y continuamos
+      // con la respuesta normal de la IA. No se envía en cada mensaje: queda
+      // registrada por producto para evitar duplicados.
+      const productDetectedInThisMessage = detectedProduct || detectedProductAfterTranscription;
+      if (productDetectedInThisMessage && !productDetectedInThisMessage.firstContactEnabled) {
+        const sentPrimary = await sendPrimaryProductImageIfNeeded(userId, productDetectedInThisMessage);
+        if (sentPrimary) {
+          io.emit('log', `🖼️ Imagen principal enviada automáticamente: ${productDetectedInThisMessage.name}`);
+        }
+      }
+
       if (isNewUser) {
         await sendAndTrack(userId, { text: cfg.welcomeMessage });
       }
@@ -4463,6 +4571,38 @@ async function getReplyWithSelfHealing(userId, history, messageText) {
   }
   throw lastError;
 }
+
+  async function sendPrimaryProductImageIfNeeded(userId, product) {
+    if (!product?.id) return false;
+    const images = normalizeProductImages(product);
+    if (images.length === 0) return false;
+
+    ensureClientRecord(userId);
+    const client = clients.get(userId);
+    client.primaryProductImageSentForProduct = client.primaryProductImageSentForProduct || {};
+    if (client.primaryProductImageSentForProduct[product.id]) return false;
+
+    // La primera imagen cargada del producto es la imagen principal.
+    // No usamos reglas de imagen aquí: esta es la presentación inicial.
+    const primary = images[0];
+    const imgPath = path.join(__dirname, String(primary.url || '').replace(/^\//, ''));
+    if (!primary.url || !fs.existsSync(imgPath)) return false;
+
+    await sendAndTrack(userId, { image: fs.readFileSync(imgPath) });
+    appendChatLog(userId, {
+      from: 'bot',
+      text: '',
+      type: 'image',
+      mediaUrl: primary.url,
+      timestamp: Date.now(),
+    });
+
+    client.primaryProductImageSentForProduct[product.id] = Date.now();
+    clients.set(userId, client);
+    saveClients();
+    io.emit('clientUpdate', { jid: userId, client });
+    return true;
+  }
 
   async function sendProductFirstContact(userId, product, isFromAd) {
     if (!product?.firstContactEnabled) return false;
