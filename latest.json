@@ -1,6 +1,6 @@
 {
-  "version": "1.31.5",
-  "notes": "Botones interactivos para Primer contacto por producto: el cliente selecciona tocando opciones de WhatsApp en lugar de escribir numeros; cada boton puede tener una respuesta automatica configurada. Se mantiene respaldo de texto si WhatsApp no admite el formato, junto con el rediseño visual y correcciones anteriores.",
+  "version": "1.31.7",
+  "notes": "Corrección de botones de Primer contacto usando Native Flow/quick_reply para evitar botones en blanco y lectura robusta de la selección. Correcciones Skydropx: package_content y package_type en cotización/envío, selección robusta de Interrápidísimo y consulta automática de puntos de oficina para entregas en sucursal. Se mantienen rediseño visual, precios en negrita y funciones anteriores.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
@@ -10,7 +10,5 @@
     "public/app.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/app.js",
     "public/style.css": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/public/style.css"
   },
-  "newDependencies": [
-    "@ffprobe-installer/ffprobe"
-  ]
+  "newDependencies": ["@ffprobe-installer/ffprobe"]
 }
