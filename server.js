@@ -1495,46 +1495,85 @@ async function skydropxLogin(cfg) {
   }
 
   const endpoint = `${skydropxBaseUrl(cfg)}/api/v1/oauth/token`;
-  const form = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: String(cfg.skydropxClientId).trim(),
-    client_secret: String(cfg.skydropxClientSecret).trim(),
-  });
+  const clientId = String(cfg.skydropxClientId).trim();
+  const clientSecret = String(cfg.skydropxClientSecret).trim();
 
-  let res;
-  try {
-    // Skydropx documenta el OAuth client_credentials como
-    // application/x-www-form-urlencoded. No enviar JSON aquí.
-    res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      body: form.toString(),
-    });
-  } catch (e) {
-    const cause = e?.cause;
-    const detail = [
-      e?.message,
-      cause?.code ? `código=${cause.code}` : '',
-      cause?.message && cause.message !== e?.message ? `causa=${cause.message}` : '',
-    ].filter(Boolean).join(' | ');
-    throw new Error(`No se pudo conectar con Skydropx (${endpoint}). Detalle: ${detail || 'error de red desconocido'}`);
+  async function requestToken(headers, body) {
+    try {
+      return await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body,
+      });
+    } catch (e) {
+      const cause = e?.cause;
+      const detail = [
+        e?.message,
+        cause?.code ? `código=${cause.code}` : '',
+        cause?.message && cause.message !== e?.message ? `causa=${cause.message}` : '',
+      ].filter(Boolean).join(' | ');
+      throw new Error(`No se pudo conectar con Skydropx (${endpoint}). Detalle: ${detail || 'error de red desconocido'}`);
+    }
   }
 
-  const text = await res.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`Skydropx respondió algo inesperado (HTTP ${res.status}). Detalle: ${text.slice(0, 200)}`);
+  // La documentación oficial muestra x-www-form-urlencoded para OAuth.
+  // Algunas versiones del backend/documentación de Skydropx han mostrado
+  // ejemplos JSON, por lo que si el endpoint devuelve 422 probamos una sola
+  // vez JSON. Esto no cambia ninguna otra función del sistema.
+  const form = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+
+  let res = await requestToken(
+    {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    form.toString()
+  );
+
+  let text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) {}
+
+  // Compatibilidad adicional: si el Sandbox responde 422 al formato form,
+  // reintentamos exactamente la misma autenticación como JSON.
+  if (res.status === 422) {
+    res = await requestToken(
+      {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: clientId,
+        client_secret: clientSecret,
+      })
+    );
+    text = await res.text();
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = null; }
+  }
+
+  if (!data) {
+    throw new Error(
+      `Skydropx respondió algo inesperado (HTTP ${res.status}) en ${endpoint}. ` +
+      `Respuesta: ${text.slice(0, 1000) || '(vacía)'}`
+    );
   }
 
   if (!res.ok || !data.access_token) {
-    const detail = data.error_description || data.error || text || `HTTP ${res.status}`;
+    const detail = data.error_description || data.error || data.errors || data.message || text || `HTTP ${res.status}`;
     const responseType = res.headers.get('content-type') || 'desconocido';
-    throw new Error(`Skydropx no autorizó la conexión (HTTP ${res.status}). Tipo: ${responseType}. Respuesta: ${String(detail).slice(0, 500)}`);
+    let safeDetail;
+    try { safeDetail = JSON.stringify(detail); } catch (_) { safeDetail = String(detail); }
+    throw new Error(
+      `Skydropx rechazó la autenticación. HTTP ${res.status}. ` +
+      `Ambiente: ${cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción'}. ` +
+      `Endpoint: ${endpoint}. Tipo: ${responseType}. ` +
+      `Respuesta: ${safeDetail.slice(0, 1500)}`
+    );
   }
 
   skydropxTokenCache = data.access_token;
