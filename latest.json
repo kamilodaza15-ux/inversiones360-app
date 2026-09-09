@@ -1,6 +1,6 @@
 {
-  "version": "1.31.2",
-  "notes": "Corrección de subida de pedidos a Skydropx: el HTTP 422 estaba ocurriendo al crear la cotización porque faltaba declared_amount, obligatorio en la API actual. Se actualizó además el manejo de la respuesta de cotización (rates/is_completed), la creación del envío según el esquema actual de Skydropx y el diagnóstico detallado de errores. Se mantienen todas las funciones anteriores.",
+  "version": "1.31.3",
+  "notes": "Corrección de integración Skydropx: acepta correctamente el ID de cotización en las distintas estructuras de respuesta de la API y evita el mensaje falso de cotización sin ID. También ajusta la regla de precio para que el valor actual se envíe en negrita de WhatsApp usando *precio*. Se mantienen todas las funciones anteriores.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
