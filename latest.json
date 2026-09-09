@@ -1,6 +1,6 @@
 {
-  "version": "1.31.8",
-  "notes": "Cotizador de fletes Skydropx dentro del detalle de cada pedido: consulta tarifas por transportadora, muestra la tarifa más económica y consulta el saldo del ambiente (Sandbox/Producción). Mantiene correcciones de paquete, oficina, botones, precios y diseño visual anteriores.",
+  "version": "1.31.9",
+  "notes": "Navegación rápida Pedido ↔ Chat: botón Ir al chat desde el detalle de pedido y botón flotante Ir a pedido desde el chat para abrir el pedido más reciente del cliente. Mantiene cotización de fletes Skydropx, selección de transportadora, correcciones de paquete/oficina, botones interactivos, precios en negrita y diseño visual anteriores.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
