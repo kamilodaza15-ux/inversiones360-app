@@ -229,7 +229,7 @@ fetch('/api/network-info')
 
 // ---------- Configuración ----------
 const cfgFields = [
-  'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions',
+  'assistantName', 'companyName', 'welcomeMessage', 'baseInstructions', 'firstContactPrompt',
   'responseDelaySeconds', 'notificationPhoneNumber', 'pauseDurationMinutes', 'aiProvider', 'groqApiKey',
   'openaiApiKey', 'deepseekApiKey', 'autoUploadProvider', 'dropiEmail', 'dropiPassword',
   'skydropxClientId', 'skydropxClientSecret',
@@ -282,6 +282,7 @@ async function loadConfig() {
   // lo traducimos automáticamente a voiceMode la primera vez que carga.
   document.getElementById('cfg-voiceMode').value = cfg.voiceMode || (cfg.voiceEnabled ? 'voice' : 'off');
   document.getElementById('cfg-confirmOrderDataBeforeClosing').checked = !!cfg.confirmOrderDataBeforeClosing;
+  document.getElementById('cfg-sellerMode').checked = cfg.sellerMode === true || cfg.sellerModeEnabled === true || cfg.modoVendedor === true;
   document.getElementById('cfg-dropiUseTestEnv').checked = !!cfg.dropiUseTestEnv;
   document.getElementById('cfg-skydropxUseTestEnv').checked = !!cfg.skydropxUseTestEnv;
   document.getElementById('cfg-minimaxApiKey').value = cfg.minimaxApiKey || '';
@@ -388,6 +389,7 @@ async function saveMainConfig(savedLabelId) {
   body.openaiModel = getModelValue('cfg-openaiModel', 'cfg-openaiModel-custom');
   body.deepseekModel = getModelValue('cfg-deepseekModel', 'cfg-deepseekModel-custom');
   body.confirmOrderDataBeforeClosing = document.getElementById('cfg-confirmOrderDataBeforeClosing').checked;
+  body.sellerMode = document.getElementById('cfg-sellerMode').checked;
   body.dropiUseTestEnv = document.getElementById('cfg-dropiUseTestEnv').checked;
   body.skydropxUseTestEnv = document.getElementById('cfg-skydropxUseTestEnv').checked;
   await fetch('/api/config', {
@@ -1848,6 +1850,8 @@ function resetProductForm() {
   productForm.reset();
   document.getElementById('p-id').value = '';
   document.getElementById('p-video-current').textContent = '';
+  document.getElementById('p-saleMode').value = 'general';
+  document.getElementById('p-assistantPrompt').value = '';
   cancelEditBtn.style.display = 'none';
   formTitle.textContent = '➕ Agregar producto';
   quantityOffersState = [];
@@ -1941,6 +1945,7 @@ async function loadProducts() {
       .map((img) => `<img src="${typeof img === 'string' ? img : img.url}" onerror="this.style.visibility='hidden'" />`)
       .join('');
     const videoBadge = p.video ? '<span class="price-tag after">🎥 Video</span>' : '';
+    const assistantBadge = p.saleMode === 'prompt' && p.assistantPrompt ? '<span class="price-tag after">🎯 Prompt propio</span>' : (p.saleMode === 'general' ? '<span class="price-tag">🛍️ Vendedor</span>' : '');
     const item = document.createElement('div');
     item.className = 'product-item';
     item.innerHTML = `
@@ -1949,6 +1954,7 @@ async function loadProducts() {
         <b>${p.name}</b>
         ${priceTagHTML(p)}
         ${videoBadge}
+        ${assistantBadge}
         <div class="kw">${(p.keywords || []).join(', ')}</div>
       </div>
       <div class="actions">
@@ -1987,7 +1993,9 @@ function openProductFormCard() {
       document.getElementById('p-skydropxProductId').value = p.skydropxProductId || '';
       quantityOffersState = p.quantityOffers ? [...p.quantityOffers] : [];
       renderQuantityOffers();
-      document.getElementById('p-details').value = p.details;
+      document.getElementById('p-details').value = p.details || '';
+      document.getElementById('p-saleMode').value = p.saleMode || 'general';
+      document.getElementById('p-assistantPrompt').value = p.assistantPrompt || '';
       document.getElementById('p-video-current').textContent = p.video
         ? '🎥 Ya tiene un video cargado. Elige otro archivo aquí solo si quieres reemplazarlo.'
         : '';
@@ -2023,6 +2031,8 @@ productForm.addEventListener('submit', async (e) => {
   formData.append('skydropxProductId', document.getElementById('p-skydropxProductId').value);
   formData.append('quantityOffers', JSON.stringify(quantityOffersState.filter((o) => o.price)));
   formData.append('details', document.getElementById('p-details').value);
+  formData.append('saleMode', document.getElementById('p-saleMode').value);
+  formData.append('assistantPrompt', document.getElementById('p-assistantPrompt').value);
   const imageFiles = document.getElementById('p-images').files;
   for (const file of imageFiles) formData.append('images', file);
   const videoFile = document.getElementById('p-video').files[0];
