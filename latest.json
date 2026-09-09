@@ -1,6 +1,6 @@
 {
   "version": "1.31.1",
-  "notes": "Constructor de Primer contacto por producto: secuencia opcional de pasos configurables (texto, foto, video, audio, pregunta y respuestas), ordenable y eliminable, con pausas; ejecución una sola vez por producto y cliente. Interfaz renovada para Agregar/Editar producto y estilos nuevos en style.css. Se mantienen Modo Vendedor por producto, prompt personalizado, banco de medios inteligente, validación Colombia, programación segura, Skydropx y optimizaciones anteriores.",
+  "notes": "Corrección y diagnóstico reforzado de autenticación Skydropx: mantiene OAuth oficial, prueba compatibilidad JSON si Sandbox devuelve HTTP 422 y muestra ambiente, endpoint y respuesta real sin exponer Client Secret. Se mantienen todas las funciones anteriores.",
   "files": {
     "server.js": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/server.js",
     "package.json": "https://raw.githubusercontent.com/kamilodaza15-ux/inversiones360-app/main/package.json",
