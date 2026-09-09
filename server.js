@@ -1754,6 +1754,33 @@ function getSkydropxOriginSummary(cfg) {
   };
 }
 
+// Skydropx Colombia recomienda usar la dirección guardada/verificada como
+// origen mediante template_id. Esto evita volver a enviar campos de la bodega
+// (incluido email) y hace que la cotización y la guía usen exactamente la
+// dirección predeterminada de Skydropx.
+async function getSkydropxDefaultAddressTemplate(cfg) {
+  try {
+    const data = await skydropxRequest(cfg, '/api/v1/address_templates');
+    const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.address_templates) ? data.address_templates : [];
+    const normalized = list.map((x) => ({
+      id: x?.id || x?.attributes?.id || '',
+      default: Boolean(x?.default || x?.attributes?.default || x?.attributes?.is_default),
+      name: x?.attributes?.name || x?.name || '',
+      alias: x?.attributes?.alias_name || x?.alias_name || '',
+    })).filter((x) => x.id);
+    return normalized.find((x) => x.default) || normalized[0] || null;
+  } catch (e) {
+    console.warn('No se pudo consultar la dirección guardada de Skydropx; se usará la dirección configurada en la app:', e.message);
+    return null;
+  }
+}
+
+async function getSkydropxOriginForRequest(cfg) {
+  const template = await getSkydropxDefaultAddressTemplate(cfg);
+  if (template?.id) return { template_id: template.id, template };
+  return { address: getSkydropxOriginConfig(cfg), template: null };
+}
+
 async function quoteOrderWithSkydropx(order) {
   const cfg = readConfig();
   if (!cfg.skydropxClientId || !cfg.skydropxClientSecret) {
@@ -1767,9 +1794,10 @@ async function quoteOrderWithSkydropx(order) {
   const declaredAmount = Number(String(order.price || '').replace(/[^\d]/g, '')) || 0;
   if (!declaredAmount) throw new Error('El pedido no tiene un precio válido para cotizar el flete en Skydropx.');
 
+  const originForRequest = await getSkydropxOriginForRequest(cfg);
   const quotationBody = {
     quotation: {
-      address_from: getSkydropxOriginConfig(cfg),
+      address_from: originForRequest.address || originForRequest.template_id ? (originForRequest.address || { template_id: originForRequest.template_id }) : getSkydropxOriginConfig(cfg),
       address_to: {
         country_code: 'CO', postal_code: order.postalCode || '',
         area_level1: order.department || '', area_level2: order.city || '',
@@ -1821,6 +1849,8 @@ async function quoteOrderWithSkydropx(order) {
     quotationId, rates, balance: null,
     environment: cfg.skydropxUseTestEnv ? 'Sandbox' : 'Producción',
     origin: getSkydropxOriginSummary(cfg),
+    originTemplateId: originForRequest.template?.id || '',
+    originTemplateName: originForRequest.template?.name || originForRequest.template?.alias || '',
     package: SKYDROPX_STANDARD_PACKAGE,
   };
 }
@@ -1919,11 +1949,12 @@ async function uploadOrderToSkydropx(order, options = {}) {
     officeDeliveryPointId = points[0].id;
   }
 
+  const originForShipment = await getSkydropxOriginForRequest(cfg);
   const shipmentBody = {
     shipment: {
       rate_id: rateId,
       unique_shipment: true,
-      address_from: getSkydropxOriginConfig(cfg),
+      address_from: originForShipment.address || originForShipment.template_id ? (originForShipment.address || { template_id: originForShipment.template_id }) : getSkydropxOriginConfig(cfg),
       address_to: {
         country_code: 'CO',
         postal_code: order.postalCode || '',
