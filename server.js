@@ -1483,7 +1483,7 @@ function skydropxBaseUrl(cfg) {
   // El texto de su propia documentación dice explícitamente "usa el host
   // correcto: api-pro.skydropx.com" para producción — para sandbox seguimos
   // el mismo patrón que usan para encontrar credenciales (sb-pro / pro).
-  return cfg.skydropxUseTestEnv ? 'https://api-sb-pro.skydropx.com' : 'https://api-pro.skydropx.com';
+  return cfg.skydropxUseTestEnv ? 'https://sb-pro.skydropx.com' : 'https://api-pro.skydropx.com';
 }
 
 let skydropxTokenCache = null;
