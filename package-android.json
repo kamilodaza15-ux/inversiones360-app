@@ -1,7 +1,7 @@
 {
   "name": "inversiones360-chat-android",
-  "version": "1.27.6",
-  "description": "Asistente de ventas por WhatsApp con IA (versi\u00f3n Android/Termux, sin Electron)",
+  "version": "1.32.5",
+  "description": "Asistente de ventas por WhatsApp con IA (versión Android/Termux, sin Electron)",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
@@ -18,6 +18,7 @@
     "groq-sdk": "^0.7.0",
     "openai": "^4.68.0",
     "fluent-ffmpeg": "^2.1.2",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
     "adm-zip": "^0.5.16",
     "pdfkit": "^0.15.0"
   }
